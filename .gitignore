@@ -47,3 +47,11 @@ venv/
 *.log
 *.tmp
 *.bak
+# Local development utilities
+/camera_editor.py
+/capture_three_cameras.py
+/check_slot_layout.py
+/cleanup_project.py
+/layout_editor.py
+/run_physics_test.py
+/verify_layout.py
