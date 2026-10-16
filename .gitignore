@@ -1,0 +1,49 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE settings
+.vscode/
+.idea/
+
+# Temporary files
+*.log
+*.tmp
+*.bak
+
+# Simulation outputs
+outputs/
+recordings/
+videos/
+
+# Local configuration
+.env
+.env.*
+
+# Temporary xArm processing files
+_xarm_xacro_work/
+
+# Old robot descriptions
+xarm_description_old/
+
+# Generated camera outputs
+camera_output_v15/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Local environments
+.venv/
+venv/
+
+# Temporary and backup files
+*.log
+*.tmp
+*.bak

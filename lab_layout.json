@@ -1,0 +1,106 @@
+{
+  "comment": "Robot base/world origin (0,0,0). V6: geometries adjustable in JSON or editor. All dimensions in metres. VersaMax front recess is a real OPEN-TOP cavity, the tray extends outward.",
+  "table": {
+    "center_xy": [
+      0.0,
+      0.27
+    ],
+    "top_z": -0.01,
+    "size_xy": [
+      2.0,
+      1.36
+    ],
+    "height": 0.75,
+    "auto_fit": true,
+    "auto_fit_margin_m": 0.2
+  },
+  "ot2": {
+    "position_xy": [
+      -0.36,
+      0.72
+    ],
+    "yaw_deg": 0.0,
+    "temperature_slot": 6,
+    "temperature_yaw_deg": 0.0,
+    "waiting_slot": 3,
+    "stack_slot": 2,
+    "stack_count": 3,
+    "stack_plate_pitch_m": 0.017,
+    "temperature_base_yaw_deg": 90.0,
+    "temperature_block_yaw_deg": 0.0,
+    "orientation_mode": "manual",
+    "body_size_m": [
+      0.63,
+      0.57,
+      0.66
+    ],
+    "deck_height_m": 0.105,
+    "temperature_base_size_m": [
+      0.09,
+      0.194,
+      0.084
+    ],
+    "temperature_block_size_m": [
+      0.131,
+      0.089,
+      0.02
+    ],
+    "base_thickness_m": 0.068,
+    "deck_thickness_m": 0.002,
+    "deck_mount_mode": "on_base",
+    "show_deck_slab": false,
+    "show_slot_tiles": true,
+    "slot_tile_size_m": [
+      0.129,
+      0.085
+    ],
+    "deck_vertical_offset_m": 0.0,
+    "temperature_offset_xyz_m": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "temperature_local_xyz_m": [
+      0.17,
+      -0.045,
+      0.0
+    ],
+    "show_slot_outlines": true,
+    "slot_size_mode": "plate_plus_1mm"
+  },
+  "versamax": {
+    "position_xy": [
+      0.16,
+      0.72
+    ],
+    "yaw_deg": 0.0,
+    "tray_surface_height_m": 0.115,
+    "orientation_mode": "manual",
+    "body_size_m": [
+      0.38,
+      0.58,
+      0.22
+    ],
+    "tray_size_m": [
+      0.115,
+      0.14,
+      0.015
+    ],
+    "recess_size_m": [
+      0.2,
+      0.14,
+      0.13
+    ],
+    "tray_retraction_m": 0.0
+  },
+  "plate": {
+    "start_at": "pickup",
+    "preview_static_plate": true,
+    "size_m": [
+      0.128,
+      0.084,
+      0.015
+    ],
+    "flat_surface_axes": "XY"
+  }
+}

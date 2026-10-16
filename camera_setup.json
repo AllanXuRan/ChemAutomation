@@ -1,0 +1,47 @@
+{
+  "cameras": {
+    "global_overhead": {
+      "frame": "world",
+      "position_xyz_m": [
+        -0.06,
+        0.5475,
+        1.591
+      ],
+      "look_at_xyz_m": [
+        -0.06,
+        0.5875,
+        0.141
+      ],
+      "fovy_deg": 70.0
+    },
+    "wrist_gripper": {
+      "frame": "gripper",
+      "position_xyz_m": [
+        -0.035,
+        -0.12,
+        0.14
+      ],
+      "look_at_xyz_m": [
+        0.135,
+        0.0,
+        0.055
+      ],
+      "fovy_deg": 65.0
+    },
+    "plate_overhead": {
+      "frame": "world",
+      "position_xyz_m": [
+        -0.19,
+        0.675,
+        0.6195
+      ],
+      "look_at_xyz_m": [
+        -0.19,
+        0.675,
+        0.1695
+      ],
+      "fovy_deg": 48.0
+    }
+  },
+  "notes": "world=robot base, gripper=UFACTORY G2 base frame; metres; virtual pinhole cameras"
+}

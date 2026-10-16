@@ -1,0 +1,29 @@
+{
+  "physics": {
+    "timestep_s": 0.002,
+    "plate_mass_kg": 0.038,
+    "plate_friction": [0.8, 0.005, 0.0001],
+    "support_friction": [0.8, 0.005, 0.0001],
+    "plate_initial_lift_m": 0.005,
+    "robot_gravcomp_fraction": 1.0,
+    "arm_position_kp": 150.0,
+    "arm_position_kv": 20.0
+  },
+  "cameras": {
+    "ot2_rgbd": {
+      "target_site": "ot2_pickup",
+      "offset_world_xyz_m": [0.0, -0.24, 0.48],
+      "fovy_deg": 55.0
+    },
+    "reader_rgbd": {
+      "target_site": "versamax_load",
+      "offset_world_xyz_m": [0.0, -0.26, 0.42],
+      "fovy_deg": 55.0
+    },
+    "waiting_rgbd": {
+      "target_site": "ot2_waiting",
+      "offset_world_xyz_m": [0.0, -0.22, 0.42],
+      "fovy_deg": 55.0
+    }
+  }
+}
