@@ -17,7 +17,7 @@
   "ot2": {
     "position_xy": [
       -0.36,
-      0.72
+      0.67
     ],
     "yaw_deg": 0.0,
     "temperature_slot": 6,
@@ -71,7 +71,7 @@
   "versamax": {
     "position_xy": [
       0.16,
-      0.72
+      0.67
     ],
     "yaw_deg": 0.0,
     "tray_surface_height_m": 0.115,

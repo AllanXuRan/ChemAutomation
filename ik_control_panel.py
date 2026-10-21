@@ -3,8 +3,8 @@
 Uses V16 xarm_description/xarm5_lab_fk_camera.xml created by setup_tcp_cameras.py.
 No ROS 2 and no changes to your OT-2 / VersaMax dimensions.
 
-This is KINEMATIC visualization (mj_forward without mj_step): NOT a
-collision-checked trajectory planner or a force-controlled physical grasp.
+Continuous contact dynamics with actuator targets, frictional grasping, and a
+horizontal flange constraint. Motions are not automatically collision planned.
 
 Run: python ik_control_panel.py
 """
@@ -14,6 +14,7 @@ import json
 import math
 import time
 import tkinter as tk
+from datetime import datetime
 from pathlib import Path
 from tkinter import ttk, messagebox
 
@@ -22,6 +23,10 @@ import mujoco.viewer
 import numpy as np
 
 import robot_kinematics as kin
+from grasp_workflow import WorkflowPanel
+from keyboard_ee import CartesianJog, KEY_DIRECTIONS
+from physics_runtime import PhysicsRuntime, load_physics_model
+from state_capture import StateRecorder
 
 ROOT = Path(__file__).resolve().parent
 SCENE = ROOT / 'xarm_description' / 'xarm5_lab_fk_camera.xml'
@@ -43,18 +48,20 @@ def main():
     if not SCENE.is_file():
         raise SystemExit(f'No {SCENE}\nRun: python setup_tcp_cameras.py')
 
-    model = mujoco.MjModel.from_xml_path(str(SCENE.resolve()))
+    model = load_physics_model(SCENE)
     data = mujoco.MjData(model)
-    ik_data = mujoco.MjData(model)
+    workflow = None
     info = kin.arm_info(model)
     tcp_id = kin.site_id(model, 'g2_tcp')
     goal_id = kin.site_id(model, 'ik_target')
 
     data.qpos[:] = model.qpos0
-    q0 = kin.clip_angles(model, info, kin.Q0)
+    q0 = kin.level_flange(model, info, kin.Q0)
     kin.set_angles(model, data, info, q0)
     actuator_hold(model, data, q0)
     mujoco.mj_forward(model, data)
+    physics = PhysicsRuntime(model, data, info)
+    jog_data = mujoco.MjData(model)
 
     targets = []
     for name in DEFAULT_TARGETS:
@@ -64,8 +71,8 @@ def main():
         print('WARNING: no named lab targets, use Manual XYZ')
 
     root = tk.Tk()
-    root.title('xArm5 / G2 TCP - Live FK and IK')
-    root.geometry('735x870')
+    root.title('xArm5 / G2 TCP - Contact Physics')
+    root.geometry('760x1020')
     frame = ttk.Frame(root, padding=14)
     frame.pack(fill='both', expand=True)
 
@@ -102,11 +109,60 @@ def main():
     ik_buttons = ttk.Frame(target_box)
     ik_buttons.grid(row=4, column=0, columnspan=6, sticky='w', pady=6)
 
+    keyboard_box = ttk.LabelFrame(frame, text='键盘移动 EE（机器人底座 / 世界坐标）', padding=8)
+    keyboard_box.pack(fill='x', pady=5)
+    keyboard_speed = tk.StringVar(value='0.03')
+    ttk.Label(keyboard_box, text='速度 (m/s)').pack(side='left')
+    ttk.Entry(keyboard_box, textvariable=keyboard_speed, width=7).pack(side='left', padx=5)
+    keyboard_pad = tk.Label(keyboard_box, takefocus=True, relief='groove', padx=10, pady=8,
+                            text='点击这里启用：A/D −X/+X · W/S +Y/−Y · Ctrl/Space −Z/+Z\n按住 Q 渐闭 · E 渐开；松键停止；Esc 退出', bg='#eeeeee')
+    keyboard_pad.pack(side='left', fill='x', expand=True)
+    jog = CartesianJog(model, info, tcp_id, level=True)
+    pressed_keys = set()
+    keyboard_clock = [time.perf_counter()]
+
+    def keyboard_stop(_=None):
+        pressed_keys.clear()
+        keyboard_pad.configure(bg='#eeeeee')
+
+    def keyboard_enable(_=None):
+        pause_manual()
+        keyboard_clock[0] = time.perf_counter()
+        keyboard_pad.focus_set()
+        keyboard_pad.configure(bg='#d9efda')
+
+    def keyboard_press(event):
+        key = event.keysym.lower()
+        if key == 'escape':
+            keyboard_stop()
+            root.focus_set()
+            return 'break'
+        if key in ('q', 'e'):
+            if key not in pressed_keys:
+                moving['active'] = False
+                workflow.stop()
+                pressed_keys.add(key)
+            return 'break'
+        if key in KEY_DIRECTIONS:
+            moving['active'] = False
+            workflow.stop()
+            pressed_keys.add(key)
+            return 'break'
+
+    def keyboard_release(event):
+        pressed_keys.discard(event.keysym.lower())
+        if event.keysym.lower() in KEY_DIRECTIONS or event.keysym.lower() in ('q', 'e'):
+            return 'break'
+
+    keyboard_pad.bind('<Button-1>', keyboard_enable)
+    keyboard_pad.bind('<KeyPress>', keyboard_press)
+    keyboard_pad.bind('<KeyRelease>', keyboard_release)
+    keyboard_pad.bind('<FocusOut>', keyboard_stop)
+
     joints_box = ttk.LabelFrame(frame, text='正运动学 FK：直接拖动五个关节（度）', padding=9)
     joints_box.pack(fill='x', pady=10)
-    joint_scales = []
+    joint_values = []
     joint_numbers = []
-    suppress_slider = [False]
     moving = {'active': False, 'start': 0.0, 'from': None, 'to': None,
               'duration': 1.8}
 
@@ -117,6 +173,8 @@ def main():
     status_label.pack(fill='x', pady=(4, 2))
     ttk.Label(frame, textvariable=pose_text, font=('Consolas', 10),
               wraplength=670).pack(fill='x', pady=(0, 8))
+    physics_text = tk.StringVar(value='物理仿真运行中')
+    ttk.Label(frame, textvariable=physics_text, wraplength=670).pack(fill='x')
 
     camera_box = ttk.LabelFrame(frame, text='MuJoCo 观察视角', padding=9)
     camera_box.pack(fill='x', pady=(3, 8))
@@ -137,31 +195,46 @@ def main():
                       f'q (deg) = [{", ".join(f"{v:.1f}" for v in np.degrees(q))}]')
 
     def update_slider_labels(q):
-        suppress_slider[0] = True
-        try:
-            for i, val in enumerate(q):
-                joint_scales[i].set(math.degrees(float(val)))
-                joint_numbers[i].set(f'{math.degrees(float(val)):+.2f}°')
-        finally:
-            suppress_slider[0] = False
+        # Updating the variable avoids Scale.set's deferred command callback.
+        for value, number, angle in zip(joint_values, joint_numbers, q):
+            degrees = math.degrees(float(angle))
+            value.set(degrees)
+            number.set(f'{degrees:+.2f}°')
 
     def apply_q(q, announce=False):
-        q = kin.clip_angles(model, info, q)
+        q = kin.level_flange(model, info, q)
         with viewer.lock():
-            kin.set_angles(model, data, info, q)
-            actuator_hold(model, data, q)
+            physics.set_arm_target(q)
         update_slider_labels(q)
         if announce:
-            info_text.set('已更新关节姿态（运动学预览，不模拟实际速度和力）')
+            info_text.set('已设置关节目标，机械臂由驱动器逐渐移动；碰撞可能阻挡运动')
         show_fk()
         return q
 
     def move_manual(*_):
-        if suppress_slider[0]:
-            return
+        pause_manual()
+        values = np.radians([v.get() for v in joint_values])
+        try:
+            apply_q(values)
+        except ValueError as exc:
+            update_slider_labels(read_current())
+            info_text.set(str(exc))
+
+    def cancel_motion():
+        keyboard_stop()
         moving['active'] = False
-        values = np.radians([s.get() for s in joint_scales])
-        apply_q(values)
+
+    def pause_manual():
+        cancel_motion()
+        if workflow is not None:
+            workflow.stop()
+
+    def jog_gripper(direction, dt):
+        with viewer.lock():
+            held = workflow.controller.jog_fingers(direction, dt)
+        info_text.set('检测到双侧夹持接触；请缓慢抬起确认。' if held else
+                      '夹爪目标逐渐闭合；靠接触与摩擦抓取。' if direction > 0 else
+                      '夹爪目标逐渐张开；反应盘受重力与接触作用。')
 
     for i, (jid, _, _) in enumerate(info):
         lo, hi = model.jnt_range[jid] if model.jnt_limited[jid] else (-math.pi, math.pi)
@@ -169,12 +242,15 @@ def main():
         line.pack(fill='x', pady=2)
         ttk.Label(line, text=f'joint{i+1}', width=9).pack(side='left')
         number = tk.StringVar()
+        value = tk.DoubleVar(value=math.degrees(float(q0[i])))
         slider = tk.Scale(line, from_=math.degrees(float(lo)), to=math.degrees(float(hi)),
                           resolution=0.2, showvalue=False, orient='horizontal',
-                          length=415, command=move_manual)
+                          length=415, variable=value, command=move_manual)
         slider.pack(side='left', fill='x', expand=True)
+        if i == 3:
+            slider.configure(state='disabled')
         ttk.Label(line, textvariable=number, width=12).pack(side='left')
-        joint_scales.append(slider)
+        joint_values.append(value)
         joint_numbers.append(number)
 
     def set_goal_for(name):
@@ -210,16 +286,21 @@ def main():
 
     target_select.bind('<<ComboboxSelected>>', choose_target)
 
-    def ik_go(animated=False):
+    def ik_go(animated=False, align_plate=False):
         try:
+            pause_manual()
             xyz = goal_xyz()
             q_orig = read_current()
             # Solve in separate mjData; never touch the Viewer while iterating.
             tmp = mujoco.MjData(model)
-            tmp.qpos[:] = data.qpos.copy()
+            with viewer.lock():
+                tmp.qpos[:] = data.qpos
+                plate_rot = data.xmat[physics.controller.plate].reshape(3, 3).copy()
             kin.set_angles(model, tmp, info, q_orig)
-            q_new, err, n_it = kin.solve_ik(model, tmp, info, tcp_id, xyz, tolerance)
-            msg = f'IK error: {err*1000:.2f} mm; attempts: {n_it}; target: {np.round(xyz, 3)}'
+            yaw = math.atan2(plate_rot[1, 0], plate_rot[0, 0]) if align_plate else None
+            q_new, err, n_it = kin.solve_ik(model, tmp, info, tcp_id, xyz, tolerance,
+                                          level=True, flange_yaw=yaw)
+            msg = f'IK error: {err*1000:.2f} mm; iterations: {n_it}; target: {np.round(xyz, 3)}'
             info_text.set(msg)
             set_goal_marker()
             if err > tolerance and not allow_closest.get():
@@ -235,13 +316,18 @@ def main():
         except Exception as exc:
             messagebox.showerror('IK failed', str(exc))
 
-    ttk.Button(ik_buttons, text='IK 立即到达（预览）', command=lambda: ik_go(False)).pack(side='left', padx=3)
-    ttk.Button(ik_buttons, text='IK 平滑运动（预览）', command=lambda: ik_go(True)).pack(side='left', padx=3)
+    ttk.Button(ik_buttons, text='IK 设置驱动目标', command=lambda: ik_go(False)).pack(side='left', padx=3)
+    ttk.Button(ik_buttons, text='IK 平滑移动', command=lambda: ik_go(True)).pack(side='left', padx=3)
+    ttk.Button(ik_buttons, text='IK 对齐反应盘', command=lambda: ik_go(True, True)).pack(side='left', padx=3)
     ttk.Button(ik_buttons, text='显示目标位置', command=set_goal_marker).pack(side='left', padx=3)
 
     bottom = ttk.Frame(joints_box)
     bottom.pack(fill='x', pady=(10, 2))
-    ttk.Button(bottom, text='回到初始姿态', command=lambda: (moving.update(active=False), apply_q(q0, True))).pack(side='left', padx=4)
+    def return_initial():
+        pause_manual()
+        apply_q(q0, True)
+
+    ttk.Button(bottom, text='回到初始姿态', command=return_initial).pack(side='left', padx=4)
     ttk.Button(bottom, text='刷新 FK', command=show_fk).pack(side='left', padx=4)
 
     def save_pose():
@@ -250,11 +336,33 @@ def main():
             q = kin.angles(data, info)
         record = {'tcp_xyz_world_m': p.tolist(), 'tcp_R_world': R.tolist(),
                   'joint_angles_rad': q.tolist(), 'joint_angles_deg': np.degrees(q).tolist(),
-                  'goal_xyz_world_m': goal_xyz()}
+                  'goal_xyz_world_m': goal_xyz().tolist()}
         OUTPUT_POSE.write_text(json.dumps(record, indent=2), encoding='utf-8')
         info_text.set(f'关节与 TCP 位姿已保存：{OUTPUT_POSE.name}')
 
     ttk.Button(bottom, text='保存当前关节姿态', command=save_pose).pack(side='left', padx=4)
+
+    recorder = StateRecorder(ROOT / 'outputs' / 'state_captures' /
+                             f'states_{datetime.now():%Y%m%d_%H%M%S_%f}.jsonl')
+    capture_box = ttk.LabelFrame(joints_box, text='自由流程：按顺序采集实际状态', padding=6)
+    capture_box.pack(fill='x', pady=(8, 0))
+    capture_name = tk.StringVar(value='step_001')
+    capture_status = tk.StringVar(value='未采集；可输入步骤名称，记录 XYZ、关节角和夹爪开度。')
+    ttk.Entry(capture_box, textvariable=capture_name, width=23).pack(side='left', padx=4)
+
+    def collect_state():
+        try:
+            with viewer.lock():
+                record = recorder.append(physics, tcp_id, capture_name.get())
+        except (OSError, ValueError) as exc:
+            info_text.set(f'采集失败：{exc}')
+            return
+        capture_status.set(f'已采集 {recorder.count} 个状态；最新：{record["name"]}')
+        info_text.set(f'状态已追加保存：{recorder.path}')
+        capture_name.set(f'step_{recorder.count+1:03d}')
+
+    ttk.Button(capture_box, text='采集当前状态', command=collect_state).pack(side='left', padx=4)
+    ttk.Label(capture_box, textvariable=capture_status, wraplength=270).pack(side='left', padx=4)
 
     def camera_switch():
         choice = cam_sel.get()
@@ -275,10 +383,22 @@ def main():
 
     ttk.Button(camera_box, text='切换视角', command=camera_switch).pack(side='left', padx=6)
 
-    ttk.Label(frame, text='注意：IK 仅约束 XYZ；xArm5 不支持任意 6D 位姿。此版本不做轨迹碰撞检测或实际抓取。',
+    ttk.Label(frame, text='接触物理已启用：重力、摩擦与夹爪驱动；法兰水平约束开启，joint4 自动补偿。双侧接触仅表示夹持候选，请缓慢抬起确认；没有自动避障。',
               wraplength=680, foreground='#795c32').pack(anchor='w', pady=(5, 0))
 
     with mujoco.viewer.launch_passive(model, data) as viewer:
+        def prepare_workflow_goal(name, offset):
+            if mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, name) < 0:
+                raise ValueError(f'Unknown target: {name}')
+            tk_target.set(name)
+            offset_field.set(str(offset))
+            set_goal_for(name)
+
+        workflow = WorkflowPanel(root, model, data, info, tcp_id, viewer,
+                                    apply_q, prepare_workflow_goal,
+                                    cancel_motion, controller=physics.controller)
+        ttk.Button(camera_box, text='抓取流程示教', command=workflow.open).pack(side='left', padx=6)
+        ttk.Button(camera_box, text='重置仿真', command=workflow.reset).pack(side='left', padx=6)
         update_slider_labels(q0)
         if targets:
             set_goal_for(targets[0])
@@ -289,6 +409,32 @@ def main():
             if not viewer.is_running():
                 root.destroy()
                 return
+            now = time.perf_counter()
+            dt = now - keyboard_clock[0]
+            keyboard_clock[0] = now
+            if root.focus_get() == keyboard_pad:
+                grip_direction = int('q' in pressed_keys) - int('e' in pressed_keys)
+                if grip_direction:
+                    jog_gripper(grip_direction, dt)
+            if pressed_keys.intersection(KEY_DIRECTIONS) and root.focus_get() == keyboard_pad:
+                try:
+                    with viewer.lock():
+                        jog_data.qpos[:] = data.qpos
+                        kin.set_angles(model, jog_data, info, physics.arm_target)
+                        q, target, error = jog.solve(jog_data, pressed_keys, float(keyboard_speed.get()), dt)
+                    if q is not None:
+                        apply_q(q)
+                        tk_target.set('Manual XYZ')
+                        offset_field.set('0')
+                        for field, value in zip(goal_fields, target):
+                            field.set(f'{value:.5f}')
+                        set_goal_marker()
+                        info_text.set('键盘移动 EE；松开停止。法兰保持水平，允许绕竖直轴转动。')
+                    elif target is not None:
+                        info_text.set('该方向不可达或关节变化过大，已保持当前位置；请换方向或调整关节姿态。')
+                except (ValueError, TypeError) as exc:
+                    keyboard_stop()
+                    info_text.set(str(exc))
             if moving['active']:
                 t = (time.perf_counter() - moving['start']) / moving['duration']
                 frac = min(1., max(0., t))
@@ -297,6 +443,20 @@ def main():
                 apply_q(q)
                 if frac >= 1.:
                     moving['active'] = False
+            workflow.tick()
+            with viewer.lock():
+                physics.advance(dt)
+                held = physics.controller.held
+                q_actual = kin.angles(data, info)
+                tracking_error = np.degrees(np.max(np.abs(q_actual-physics.arm_target)))
+                flange = model.body('link_eef').id
+                normal = data.xmat[flange].reshape(3, 3)[:, 2]
+                tilt = np.degrees(np.arccos(np.clip(-normal[2], -1, 1)))
+                sim_time = data.time
+            physics_text.set(f'物理时间 {sim_time:.2f}s | 双侧夹持接触：{"有" if held else "无"} | '
+                             f'法兰倾角 {tilt:.3f}° | 关节跟踪误差 {tracking_error:.2f}°'
+                             + (f'\n碰撞阻挡，已停止推进：{physics.blocked}；请反方向退回。' if physics.blocked else ''))
+            show_fk()
             viewer.sync()
             root.after(40, tick)
 

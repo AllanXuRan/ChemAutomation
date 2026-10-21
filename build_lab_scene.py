@@ -9,7 +9,7 @@ Tabletop is slightly BELOW the origin. All dimensions in metres.
 
 Edit lab_layout.json, then:
     python build_lab_scene.py --build-only
-    python interactive_lab_viewer.py
+    python build_lab_scene.py
 
 For an alternate plate location (visualization only):
     python build_lab_scene.py --plate-at reader --build-only
@@ -19,7 +19,6 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -32,10 +31,6 @@ CONFIG = ROOT / "lab_layout.json"
 DEFAULT_JOINT_ANGLES = (0.0, -0.60, -1.20, 0.80, 0.0)
 
 # OT-2 geometry is only a schematic approximation; don't use slot XY as calibration!
-OT2_SIZE = (0.63, 0.57, 0.66)
-OT2_DECK_Z = 0.068
-VERSAMAX_SIZE = (0.58, 0.38, 0.22)
-TEMPERATURE_SUPPORTED_SLOTS = {1, 3, 4, 6, 7, 9, 10}
 
 # Published OT-2 deck holder coordinates from PyLabRobot (metres):
 # https://github.com/PyLabRobot/pylabrobot/blob/main/pylabrobot/resources/opentrons/deck.py
@@ -98,7 +93,6 @@ def apply_geometry_defaults(config):
         o['temperature_local_xyz_m'] = [xx + ox, yy + oy, oz]
     o.setdefault('temperature_base_size_m', [0.090, 0.194, 0.084])
     o.setdefault('temperature_block_size_m', [0.128, 0.084, float(o.get('temperature_block_height_m', 0.042))])
-    v.setdefault('body_size_m', [0.58, 0.38, 0.22])
     # V7 geometry: southwest-corner notch, OPEN on WEST and SOUTH.
     # recess_size_m = [X width, Y depth, vertical height cut down from top].
     # Old V6 JSON configs are migrated without changing instrument XY/Yaw.
@@ -220,7 +214,6 @@ def validate_geometry(config):
         raise ValueError('plate.flat_surface_axes must be XY or XZ')
     if o.get('deck_mount_mode') not in ('on_base', 'custom'):
         raise ValueError('ot2.deck_mount_mode must be on_base or custom')
-    positive_xyz('ot2.temperature_base_size_m', o['temperature_base_size_m'])
     local = o['temperature_local_xyz_m']
     if not isinstance(local,(list,tuple)) or len(local)!=3 or not all(math.isfinite(float(z)) for z in local):
         raise ValueError('ot2.temperature_local_xyz_m needs finite X/Y/Z offsets')
@@ -305,23 +298,19 @@ def load_config(path=CONFIG):
     if not path.is_file():
         raise FileNotFoundError(f"Missing layout config: {path}\nPlace lab_layout.json beside this script.")
     c = json.loads(path.read_text(encoding="utf-8"))
-    before = json.dumps(c, sort_keys=True)
-    apply_geometry_defaults(c)
-    canonicalize_facing(c)
-    if json.dumps(c, sort_keys=True) != before:
-        # JSON is the single source of truth, including computed auto yaw.
-        path.write_text(json.dumps(c, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-        print(f"Updated auto-facing yaw(s) in {path}")
     for field in ("table", "ot2", "versamax", "plate"):
         if field not in c:
             raise ValueError(f"Missing config section '{field}'")
+    before = json.dumps(c, sort_keys=True)
+    apply_geometry_defaults(c)
+    canonicalize_facing(c)
     o = c["ot2"]
     slots = (o['waiting_slot'], o['stack_slot'])
     if any(type(s) is not int or not 1 <= s <= 11 for s in slots):
         raise ValueError('OT-2 waiting/stack slots must be integers 1..11')
     # Keep the 1..11 indexing because coordinates depend on slot numbers,
     # but do not prevent overlapping placements or unofficial module slots.
-    if int(o['stack_count']) < 0:
+    if type(o['stack_count']) is not int or o['stack_count'] < 0:
         raise ValueError('stack_count must be a non-negative integer')
     validate_geometry(c)
     for key in ("temperature_yaw_deg", "temperature_base_yaw_deg", "temperature_block_yaw_deg"):
@@ -330,8 +319,14 @@ def load_config(path=CONFIG):
             raise ValueError(f"Invalid OT-2 angle: {key}={val}")
     if c["plate"]["start_at"] not in ("pickup", "reader", "waiting"):
         raise ValueError("plate.start_at must be pickup / reader / waiting")
-    if len(c["table"]["center_xy"]) != 2 or len(c["versamax"]["position_xy"]) != 2:
-        raise ValueError("XY positions must have exactly two entries")
+    for section, key in (('table', 'center_xy'), ('ot2', 'position_xy'), ('versamax', 'position_xy')):
+        xy = c[section][key]
+        if len(xy) != 2 or not all(math.isfinite(float(x)) for x in xy):
+            raise ValueError(f'{section}.{key} needs two finite coordinates')
+    if json.dumps(c, sort_keys=True) != before:
+        # Persist migrations only after the whole configuration is valid.
+        path.write_text(json.dumps(c, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        print(f"Updated layout defaults / auto-facing yaw(s) in {path}")
     return c
 
 
@@ -627,7 +622,6 @@ def add_surface_slot_guides(body, ot2, support_top_z):
         char_w = 0.008
         char_h = 0.014
         gap = 0.003
-        total = len(digits) * char_w + (len(digits) - 1) * gap
         left = x - sw / 2 + 0.009
         top = y + sd / 2 - 0.007
         for i, digit in enumerate(digits):

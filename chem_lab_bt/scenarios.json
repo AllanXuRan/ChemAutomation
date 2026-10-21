@@ -1,0 +1,8 @@
+{
+  "plates": {
+    "1": [{"type": "bubble"}],
+    "2": [{"type": "slip", "risk": 0.93, "at": "TransferToReader"}],
+    "3": [{"type": "align"}],
+    "4": [{"type": "placement"}]
+  }
+}

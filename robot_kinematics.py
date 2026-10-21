@@ -36,10 +36,25 @@ def arm_info(model):
 
 def clip_angles(model, info, q):
     q = np.asarray(q, float).copy()
+    if q.shape != (len(info),) or not np.isfinite(q).all():
+        raise ValueError(f'Expected {len(info)} finite joint angles')
     for i, (jid, _, _) in enumerate(info):
         if model.jnt_limited[jid]:
             lo, hi = model.jnt_range[jid]
             q[i] = np.clip(q[i], lo + 1e-7, hi - 1e-7)
+    return q
+
+
+def level_flange(model, info, q):
+    """xArm5 downward flange: joint2 + joint3 + joint4 = 0.
+
+    link_eef local Z is the flange normal; joint1/joint5 leave it vertical.
+    """
+    q = clip_angles(model, info, q)
+    q[3] = -q[1] - q[2]
+    jid = info[3][0]
+    if model.jnt_limited[jid] and not model.jnt_range[jid, 0] <= q[3] <= model.jnt_range[jid, 1]:
+        raise ValueError('保持法兰水平需要 joint4 超出限位，已保持原姿态')
     return q
 
 
@@ -64,56 +79,94 @@ def tcp_pose(data, sid):
     return np.array(data.site_xpos[sid], float), np.asarray(data.site_xmat[sid], float).reshape(3, 3).copy()
 
 
-def jac_ik(model, data, info, tcp_sid, desired, seed, tol=0.003, max_iters=500, damping=.06):
+def jac_ik(model, data, info, tcp_sid, desired, seed, tol=0.003, max_iters=500, damping=.06, level=False, flange_yaw=None):
+    desired = np.asarray(desired, dtype=float)
+    if desired.shape != (3,) or not np.isfinite(desired).all():
+        raise ValueError('IK target must contain three finite coordinates')
+    if not np.isfinite(tol) or tol <= 0 or max_iters < 1 or not np.isfinite(damping) or damping <= 0:
+        raise ValueError('IK tolerance, iterations and damping must be positive')
     q = clip_angles(model, info, seed)
+    if level:
+        q = level_flange(model, info, q)
+    if flange_yaw is not None:
+        if not level or not np.isfinite(flange_yaw):
+            raise ValueError('Flange yaw requires horizontal flange mode')
+        q[4] = q[0] - flange_yaw
+        if not np.allclose(q, clip_angles(model, info, q), atol=1e-8):
+            raise ValueError('Flange yaw exceeds joint5 limits')
     set_angles(model, data, info, q)
     cols = [dof for _, _, dof in info]
     jacp = np.zeros((3, model.nv))
-    jacr = np.zeros((3, model.nv))
     best_q = q.copy()
     best_error = np.inf
     for iteration in range(max_iters):
         p, _ = tcp_pose(data, tcp_sid)
-        e = np.asarray(desired) - p
+        e = desired - p
         err = np.linalg.norm(e)
         if err < best_error:
             best_error, best_q = float(err), q.copy()
         if err < tol:
             return q.copy(), float(err), iteration + 1
         jacp.fill(0)
-        jacr.fill(0)
-        mujoco.mj_jacSite(model, data, jacp, jacr, tcp_sid)
+        mujoco.mj_jacSite(model, data, jacp, None, tcp_sid)
         J = jacp[:, cols]
-        dq = J.T @ np.linalg.solve(J @ J.T + damping**2 * np.eye(3), e)
+        basis = np.eye(len(info))
+        if level:
+            basis = basis[:, [0, 1, 2, 4]]
+            basis[3, 1:3] = -1
+            if flange_yaw is not None:
+                basis = basis[:, :3]
+                basis[4, 0] = 1
+            J = J @ basis
+        dq = basis @ J.T @ np.linalg.solve(J @ J.T + damping**2 * np.eye(3), e)
         dq = np.clip(dq, -.10, .10)
         if np.linalg.norm(dq) < 1e-10:
             break
         improved = False
         for scale in (1., .5, .25, .125, .0625):
             trial = clip_angles(model, info, q + scale*dq)
+            if level:
+                try:
+                    trial = level_flange(model, info, trial)
+                except ValueError:
+                    continue
+            if flange_yaw is not None:
+                trial[4] = trial[0] - flange_yaw
+                if not np.allclose(trial, clip_angles(model, info, trial), atol=1e-8):
+                    continue
             set_angles(model, data, info, trial)
             p_trial, _ = tcp_pose(data, tcp_sid)
             if np.linalg.norm(desired - p_trial) < err - 1e-9:
                 q = trial
+                trial_error = float(np.linalg.norm(desired - p_trial))
+                if trial_error < best_error:
+                    best_error, best_q = trial_error, q.copy()
                 improved = True
                 break
         if not improved:
             break
     set_angles(model, data, info, best_q)
-    return best_q, float(best_error), max_iters
+    return best_q, float(best_error), iteration + 1
 
 
-def solve_ik(model, data, info, tcp_sid, target, tol):
+def solve_ik(model, data, info, tcp_sid, target, tol, level=False, flange_yaw=None):
     current = angles(data, info)
     seeds = [current, Q0, np.zeros(5), [0.7, -0.5, -1.0, 0.7, 0],
              [-0.7, -0.5, -1.0, 0.7, 0], [0.0, 0.3, -1.3, 0.5, 0.0]]
     best = (None, np.inf, 0)
     for seed in seeds:
-        result = jac_ik(model, data, info, tcp_sid, target, seed, tol)
+        try:
+            result = jac_ik(model, data, info, tcp_sid, target, seed, tol, level=level, flange_yaw=flange_yaw)
+        except ValueError:
+            if not level:
+                raise
+            continue
         if result[1] < best[1]:
             best = result
         if result[1] <= tol:
             break
+    if best[0] is None:
+        raise ValueError('没有满足法兰水平及关节限位的 IK 初始姿态')
     set_angles(model, data, info, best[0])
     return best
 
@@ -122,7 +175,7 @@ def target_position(model, data, args):
     if args.xyz is not None:
         return np.asarray(args.xyz, float)
     sid = site_id(model, args.target)
-    return np.asarray(data.site_xpos[sid], float)
+    return data.site_xpos[sid].copy()
 
 
 def show(model, data, camera='global_overhead'):

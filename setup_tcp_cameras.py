@@ -272,7 +272,7 @@ def build(source=SOURCE, output=OUTPUT, config_path=CONFIG, reset_config=False):
         ET.SubElement(container, 'camera', name=name, mode='fixed',
                       pos=fmt(pos), xyaxes=fmt([*rot[:, 0], *rot[:, 1]]),
                       fovy=f'{float(cf["fovy_deg"]):.10g}')
-        add_camera_visuals(container, name, pos, rot)
+        #add_camera_visuals(container, name, pos, rot)
 
     # Keep original xArm, OT-2, VersaMax, collision geoms & dynamics unchanged.
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -287,7 +287,7 @@ def build(source=SOURCE, output=OUTPUT, config_path=CONFIG, reset_config=False):
     print(f'[OK] G2 TCP site attached to MuJoCo parent body: {parent_name}')
     print(f'     Local position in that body: {np.round(tcp_parent, 5).tolist()} m')
     print(f'     Official G2-base TCP: {G2_TCP_LOCAL.tolist()} m')
-    print('     Visible non-colliding camera housings: 3 (each has a lens and indicator)')
+    print('     Camera housings hidden; virtual cameras enabled')
     print('     Red sphere: IK target; green sphere: G2 TCP')
     print('     Cameras: ' + ', '.join(CAMERA_NAMES))
     for name in CAMERA_NAMES:

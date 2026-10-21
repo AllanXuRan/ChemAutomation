@@ -26,32 +26,5 @@ videos/
 .env
 .env.*
 
-# Temporary xArm processing files
-_xarm_xacro_work/
-
-# Old robot descriptions
-xarm_description_old/
-
-# Generated camera outputs
-camera_output_v15/
-
-# Python cache
-__pycache__/
-*.pyc
-
-# Local environments
-.venv/
-venv/
-
-# Temporary and backup files
-*.log
-*.tmp
-*.bak
-# Local development utilities
-/camera_editor.py
-/capture_three_cameras.py
-/check_slot_layout.py
-/cleanup_project.py
-/layout_editor.py
-/run_physics_test.py
-/verify_layout.py
+# Intermediate robot export recreated by build_lab_scene.py
+/xarm_description/xarm5_robot_exported.xml
