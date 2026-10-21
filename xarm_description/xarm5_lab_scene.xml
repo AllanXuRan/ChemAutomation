@@ -2,16 +2,16 @@
 <mujoco model="xArm5 Bio G2 - OT2 and VersaMax | base-origin frame">
   <compiler angle="radian" strippath="false" />
   <asset>
-    <mesh name="link_base" content_type="model/stl" file="meshes/xarm5/visual/link_base.stl" />
-    <mesh name="link1" content_type="model/stl" file="meshes/xarm5/visual/link1.stl" />
-    <mesh name="link2" content_type="model/stl" file="meshes/xarm5/visual/link2.stl" />
-    <mesh name="link3" content_type="model/stl" file="meshes/xarm5/visual/link3.stl" />
-    <mesh name="link4" content_type="model/stl" file="meshes/xarm5/visual/link4.stl" />
-    <mesh name="link5" content_type="model/stl" file="meshes/xarm5/visual/link5.stl" />
-    <mesh name="end_tool" content_type="model/stl" file="meshes/end_tool/collision/end_tool.stl" />
-    <mesh name="link_base_g2_mujoco" content_type="model/stl" file="meshes/gripper/bio/link_base_g2_mujoco.stl" />
-    <mesh name="left_finger_g2_mujoco" content_type="model/stl" file="meshes/gripper/bio/left_finger_g2_mujoco.stl" />
-    <mesh name="right_finger_g2_mujoco" content_type="model/stl" file="meshes/gripper/bio/right_finger_g2_mujoco.stl" />
+    <mesh name="link_base" content_type="model/stl" file="../xarm_description/meshes/xarm5/visual/link_base.stl" />
+    <mesh name="link1" content_type="model/stl" file="../xarm_description/meshes/xarm5/visual/link1.stl" />
+    <mesh name="link2" content_type="model/stl" file="../xarm_description/meshes/xarm5/visual/link2.stl" />
+    <mesh name="link3" content_type="model/stl" file="../xarm_description/meshes/xarm5/visual/link3.stl" />
+    <mesh name="link4" content_type="model/stl" file="../xarm_description/meshes/xarm5/visual/link4.stl" />
+    <mesh name="link5" content_type="model/stl" file="../xarm_description/meshes/xarm5/visual/link5.stl" />
+    <mesh name="end_tool" content_type="model/stl" file="../xarm_description/meshes/end_tool/collision/end_tool.stl" />
+    <mesh name="link_base_g2_mujoco" content_type="model/stl" file="../xarm_description/meshes/gripper/bio/link_base_g2_mujoco.stl" />
+    <mesh name="left_finger_g2_mujoco" content_type="model/stl" file="../xarm_description/meshes/gripper/bio/left_finger_g2_mujoco.stl" />
+    <mesh name="right_finger_g2_mujoco" content_type="model/stl" file="../xarm_description/meshes/gripper/bio/right_finger_g2_mujoco.stl" />
     <material name="robot_white" rgba="0.90 0.92 0.95 1" specular="0.32" shininess="0.58" />
     <material name="robot_dark" rgba="0.25 0.29 0.34 1" specular="0.4" shininess="0.65" />
     <material name="gripper" rgba="0.16 0.18 0.21 1" specular="0.45" shininess="0.6" />
