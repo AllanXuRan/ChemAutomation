@@ -32,6 +32,54 @@ class ContactPhysicsTests(unittest.TestCase):
             normal = self.data.xmat[self.model.body('link_eef').id].reshape(3, 3)[:, 2]
             self.assertLess(np.degrees(np.arccos(np.clip(-normal[2], -1, 1))), .1)
 
+    def place_test_plate_at_pickup(self):
+        """Keep grasp regressions independent of the configured starting pad."""
+        # Use a repeatable centred support even when the user edits block offsets.
+        for name in ('temperature_aluminium_block', 'temperature_contact_plate'):
+            self.model.geom_pos[self.model.geom(name).id, :2] = 0
+        mujoco.mj_forward(self.model, self.data)
+        surface = self.model.geom('temperature_contact_plate').id
+        target = self.data.geom_xpos[surface].copy()
+        target[2] += self.model.geom_size[surface, 2] + self.model.geom_size[self.model.geom('reaction_plate_box').id, 2]
+        self.model.site_pos[kin.site_id(self.model, 'ot2_pickup')] = target
+        mujoco.mj_forward(self.model, self.data)
+        address = self.model.jnt_qposadr[self.model.joint('reaction_plate_free').id]
+        pickup = self.data.site_xpos[kin.site_id(self.model, 'ot2_pickup')].copy()
+        self.data.qpos[address:address+3] = pickup + [0, 0, .005]
+        self.data.qvel[:] = 0
+        mujoco.mj_forward(self.model, self.data)
+
+    def test_four_plate_table_source_and_visual_wells(self):
+        self.assertEqual(len(self.controller.plate_bodies), 4)
+        self.run_for(2)
+        heights=[]
+        for body in self.controller.plate_bodies:
+            np.testing.assert_allclose(self.data.xpos[body,:2],[.2,.2],atol=.001)
+            heights.append(self.data.xpos[body,2])
+        self.assertGreater(max(heights)-min(heights),.04)
+        self.assertGreater(min(heights),-.004)
+        for geom in range(self.model.ngeom):
+            if '_well_' in (self.model.geom(geom).name or ''):
+                self.assertEqual(self.model.geom_contype[geom],0)
+        self.assertFalse(np.any(self.data.warning.number))
+
+    def test_stack_plates_are_dynamic_and_reset(self):
+        self.assertEqual(len(self.controller.plate_bodies), 4)
+        plate = self.model.body('ot2_stack_plate_3_body').id
+        joint = self.model.joint('ot2_stack_plate_3_free').id
+        address = self.model.jnt_qposadr[joint]
+        initial = self.data.qpos[address:address+7].copy()
+        self.data.qpos[address] += .2
+        self.data.qpos[address+2] += .1
+        mujoco.mj_forward(self.model, self.data)
+        self.assertGreater(self.data.xpos[plate, 0], initial[0]+.19)
+        self.controller.reset()
+        np.testing.assert_allclose(self.data.qpos[address:address+7], initial)
+        self.run_for(2)
+        for body in self.controller.plate_bodies:
+            self.assertTrue(np.isfinite(self.data.xpos[body]).all())
+        self.assertFalse(np.any(self.data.warning.number))
+
     def aligned_pose(self, xyz):
         """Find a level pose with gripper pads parallel to the plate's long edges."""
         scratch = mujoco.MjData(self.model)
@@ -45,7 +93,8 @@ class ContactPhysicsTests(unittest.TestCase):
         initial_z = self.data.xpos[self.controller.plate, 2]
         self.run_for(2)
         z = self.data.xpos[self.controller.plate, 2]
-        self.assertGreater(initial_z-z, .003)
+        self.assertGreaterEqual(initial_z-z, -.001)
+        self.assertTrue(any(self.controller.plate in (int(self.model.geom_bodyid[c.geom1]), int(self.model.geom_bodyid[c.geom2])) for c in self.data.contact))
         self.assertLess(initial_z-z, .01)
         self.assertTrue(np.isfinite(self.data.qpos).all())
         self.assertAlmostEqual(self.data.time, 2)
@@ -114,6 +163,7 @@ class ContactPhysicsTests(unittest.TestCase):
         self.assertFalse(np.any(self.data.warning.number))
 
     def test_contact_lift_hold_and_release(self):
+        self.place_test_plate_at_pickup()
         pickup = self.data.site_xpos[kin.site_id(self.model, 'ot2_pickup')].copy()
         # Initialize above the plate, avoiding an unrelated transit through equipment.
         above = pickup + [0, 0, .06]
@@ -137,7 +187,41 @@ class ContactPhysicsTests(unittest.TestCase):
         self.assertLess(self.data.xpos[self.controller.plate, 2], pickup[2]+.01)
         self.assertFalse(np.any(self.data.warning.number))
 
+    def test_keyboard_rotation_keeps_grasp_through_reversal(self):
+        from keyboard_ee import CartesianJog
+        self.place_test_plate_at_pickup()
+        pickup = self.data.site_xpos[kin.site_id(self.model, 'ot2_pickup')].copy()
+        above = pickup + [0, 0, .06]
+        kin.set_angles(self.model, self.data, self.info, self.aligned_pose(above))
+        self.runtime.reset_targets()
+        self.run_for(1)
+        self.runtime.set_arm_target(self.aligned_pose(pickup))
+        self.run_for(3)
+        for _ in range(100):
+            self.controller.jog_fingers(1, .02)
+            self.run_for(.02)
+        self.runtime.set_arm_target(self.aligned_pose(above))
+        self.run_for(4)
+        self.assertTrue(self.controller.held)
+        jog = CartesianJog(self.model, self.info, self.tcp, level=True)
+        scratch = mujoco.MjData(self.model)
+        z0 = self.data.xpos[self.controller.plate, 2]
+        start = kin.angles(self.data, self.info)[4]
+        peak_rotation = 0.
+        for key in ['e']*100 + ['q']*100:
+            scratch.qpos[:] = self.data.qpos
+            kin.set_angles(self.model, scratch, self.info, self.runtime.arm_target)
+            q, _, _ = jog.solve(scratch, {key}, .03, .04)
+            self.runtime.set_arm_target(q)
+            self.run_for(.04)
+            self.assertTrue(self.controller.held)
+            self.assertLess(abs(self.data.xpos[self.controller.plate, 2]-z0), .003)
+            peak_rotation = max(peak_rotation, abs(kin.angles(self.data, self.info)[4]-start))
+        self.assertGreater(peak_rotation, .5)
+        self.assertFalse(np.any(self.data.warning.number))
+
     def test_physical_workflow_waits_for_contact_then_completes(self):
+        self.place_test_plate_at_pickup()
         pickup = self.data.site_xpos[kin.site_id(self.model, 'ot2_pickup')].copy()
         above = pickup + [0, 0, .06]
         poses = [self.aligned_pose(p) for p in

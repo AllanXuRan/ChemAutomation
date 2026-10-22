@@ -31,6 +31,9 @@ class StateCaptureTests(unittest.TestCase):
             self.assertAlmostEqual(first['joints']['joint1']['target_rad'], target[0])
             np.testing.assert_allclose(list(first['tcp_xyz_world_m'].values()), data.site_xpos[tcp])
             self.assertEqual(len(first['joints']), 7)
+            self.assertEqual(len(first['all_plates']),4)
+            for body in runtime.controller.plate_bodies:
+                np.testing.assert_allclose(first['all_plates'][model.body(body).name]['xyz_world_m'],data.xpos[body])
             runtime.advance(.04)
             second = recorder.append(runtime, tcp, '')
             records = [json.loads(line) for line in recorder.path.read_text(encoding='utf-8').splitlines()]

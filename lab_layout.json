@@ -24,7 +24,7 @@
     "temperature_yaw_deg": 0.0,
     "waiting_slot": 3,
     "stack_slot": 2,
-    "stack_count": 3,
+    "stack_count": 0,
     "stack_plate_pitch_m": 0.017,
     "temperature_base_yaw_deg": 90.0,
     "temperature_block_yaw_deg": 0.0,
@@ -66,7 +66,12 @@
       0.0
     ],
     "show_slot_outlines": true,
-    "slot_size_mode": "plate_plus_1mm"
+    "slot_size_mode": "plate_plus_1mm",
+    "temperature_block_offset_xyz_m": [
+      -0.03,
+      0.0,
+      0.0
+    ]
   },
   "versamax": {
     "position_xy": [
@@ -94,13 +99,22 @@
     "tray_retraction_m": 0.0
   },
   "plate": {
-    "start_at": "pickup",
-    "preview_static_plate": true,
+    "start_at": "source",
+    "preview_static_plate": false,
     "size_m": [
       0.128,
       0.084,
       0.015
     ],
-    "flat_surface_axes": "XY"
+    "flat_surface_axes": "XY",
+    "source_stack": {
+      "position_xy_m": [
+        0.2,
+        0.2
+      ],
+      "count": 4,
+      "yaw_deg": 0.0,
+      "gap_m": 0.001
+    }
   }
 }

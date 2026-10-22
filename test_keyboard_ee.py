@@ -35,6 +35,28 @@ class KeyboardJogTests(unittest.TestCase):
                 np.testing.assert_allclose(self.data.site_xpos[self.tcp], p + direction({key})*.0004, atol=.00005)
                 self.assertLess(error, .00005)
 
+    def test_flange_rotation_keys(self):
+        q0 = kin.level_flange(self.model, self.info, kin.Q0)
+        kin.set_angles(self.model, self.data, self.info, q0)
+        jog = CartesianJog(self.model, self.info, self.tcp, level=True)
+        before = self.data.qpos.copy()
+        for key, sign in (('q', -1), ('e', 1)):
+            q, target, error = jog.solve(self.data, {key}, .03, .04)
+            self.assertAlmostEqual(q[4]-q0[4], sign*np.radians(10)*.04)
+            np.testing.assert_allclose(q[:4], q0[:4])
+            np.testing.assert_array_equal(self.data.qpos, before)
+            kin.set_angles(self.model, self.data, self.info, q)
+            np.testing.assert_allclose(self.data.site_xpos[self.tcp], target)
+            kin.set_angles(self.model, self.data, self.info, q0)
+        self.assertEqual(jog.solve(self.data, {'q', 'e'}, .03, .04), (None, None, None))
+        q, _, _ = jog.solve(self.data, {'e'}, .03, 10.)
+        self.assertAlmostEqual(q[4]-q0[4], np.radians(1))
+        upper = q0.copy()
+        upper[4] = self.model.jnt_range[self.info[4][0], 1]-1e-7
+        kin.set_angles(self.model, self.data, self.info, upper)
+        q, _, _ = jog.solve(self.data, {'e'}, .03, .04)
+        self.assertLessEqual(q[4], self.model.jnt_range[self.info[4][0], 1])
+
     def test_long_frame_bounded_and_idle(self):
         q, target, error = self.jog.solve(self.data, {'d'}, .03, 10.)
         self.assertIsNotNone(q)

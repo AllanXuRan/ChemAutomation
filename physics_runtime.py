@@ -46,11 +46,12 @@ def load_physics_model(scene):
             asset.set('file', str((scene.parent / asset.get('file')).resolve()))
     source_model = mujoco.MjModel.from_xml_string(ET.tostring(root, encoding='unicode'))
     option = root.find('option')
-    option.set('timestep', '0.002')
+    option.set('timestep', '0.001')
     option.set('integrator', 'implicitfast')
     option.set('gravity', '0 0 -9.81')
     option.set('iterations', '100')
     option.set('cone', 'elliptic')
+    option.set('noslip_iterations', '10')
     actuator = root.find('actuator')
     for act in actuator:
         if act.get('joint') in kin.ARM:
@@ -60,12 +61,48 @@ def load_physics_model(scene):
     support_names = {'ot2_waiting_pad', 'ot2_stack_pad', 'temperature_contact_plate',
                      'versamax_recess_floor', 'versamax_recess_north_face',
                      'versamax_recess_east_face', 'versamax_console',
-                     'versamax_tray_insert', 'versamax_tray_guide_0', 'versamax_tray_guide_1'}
+                     'versamax_tray_insert'}
     for geom in root.iter('geom'):
         name = geom.get('name', '')
-        if name in support_names or name.startswith(('ot2_deck_slot_', 'ot2_stack_plate_')):
+        if name in support_names or (name.startswith('ot2_deck_slot_') or (name.startswith('ot2_stack_plate_') and name[len('ot2_stack_plate_'):].isdigit())):
             geom.set('contype', '1')
             geom.set('conaffinity', '1')
+    # Give each stored plate an independent free body in world coordinates.
+    # The source stack geoms belong to the fixed OT-2 body and cannot move.
+    source_data = mujoco.MjData(source_model)
+    mujoco.mj_forward(source_model, source_data)
+    world = root.find('worldbody')
+    stack_bodies = []
+    parents = {child: parent for parent in root.iter() for child in parent}
+    for geom in list(root.iter('geom')):
+        name = geom.get('name', '')
+        if not (name.startswith('ot2_stack_plate_') and name[len('ot2_stack_plate_'):].isdigit()):
+            continue
+        existing=parents[geom]
+        if existing.tag=='body' and existing.find('freejoint') is not None:
+            stack_bodies.append(existing)
+            continue
+        gid = source_model.geom(name).id
+        quat = np.empty(4)
+        mujoco.mju_mat2Quat(quat, source_data.geom_xmat[gid])
+        body = ET.SubElement(world, 'body', name=name + '_body',
+                             pos=' '.join(map(str, source_data.geom_xpos[gid])),
+                             quat=' '.join(map(str, quat)))
+        ET.SubElement(body, 'freejoint', name=name + '_free')
+        parents[geom].remove(geom)
+        geom.set('pos', '0 0 0')
+        geom.set('quat', '1 0 0 0')
+        geom.attrib.pop('euler', None)
+        geom.set('mass', str(float(source_model.body_mass[source_model.geom_bodyid[source_model.geom('reaction_plate_box').id]])))
+        geom.set('friction', '0.8 0.005 0.0001')
+        body.append(geom)
+        stack_bodies.append(body)
+    # Move the top plate's well markers with that plate, rather than leaving ghosts.
+    visual = root.find(".//body[@name='ot2_stack_top_visual']")
+    if visual is not None and stack_bodies:
+        parents[visual].remove(visual)
+        visual.set('pos', '0 0 0')
+        stack_bodies[-1].append(visual)
     # Replace the whole-finger convex hull by several clipped mesh pieces. The hull fills the
     # concave gripping region, but a tip-only proxy leaves the shank intangible.
     for side in ('left', 'right'):
@@ -74,8 +111,8 @@ def load_physics_model(scene):
             geom.set('contype', '0')
             geom.set('conaffinity', '0')
         joint = body.find('joint')
-        joint.set('damping', '1')
-        joint.set('actuatorfrcrange', '-4 4')
+        joint.set('damping', '2')
+        joint.set('actuatorfrcrange', '-8 8')
         for part, vertices in zip(('root', 'knuckle', 'shank', 'pad'), finger_sections(source_model, side)):
             mesh_name = f'{side}_finger_{part}_hull'
             ET.SubElement(root.find('asset'), 'mesh', name=mesh_name,
@@ -83,11 +120,11 @@ def load_physics_model(scene):
             name = f'{side}_grip_pad' if part == 'pad' else f'{side}_finger_{part}_collision'
             ET.SubElement(body, 'geom', name=name, type='mesh', mesh=mesh_name, mass='0',
                           rgba='0.2 0.2 0.2 0', group='3', condim='4',
-                          friction='1.2 0.01 0.001', solref='0.004 1', solimp='0.95 0.99 0.001')
+                          friction='1.2 0.01 0.001', solref='0.008 1', solimp='0.95 0.99 0.001')
         ET.SubElement(actuator, 'position', name=f'{side}_finger_position',
-                      joint=f'{side}_finger_joint', kp='1500', kv='4',
+                      joint=f'{side}_finger_joint', kp='1500', kv='12',
                       ctrllimited='true', ctrlrange=joint.get('range'),
-                      forcelimited='true', forcerange='-4 4')
+                      forcelimited='true', forcerange='-8 8')
     # Enforce the flange relation in the dynamics solver as well as IK.
     tendon = root.find('tendon')
     if tendon is None:
@@ -107,6 +144,7 @@ class PhysicsRuntime:
         self.arm_act = [model.actuator(n + '_position').id for n in kin.ARM]
         self.arm_target = kin.level_flange(model, info, kin.angles(data, info))
         self.command = self.arm_target.copy()
+        self.wrist_velocity = 0.
         self.remainder = 0.
         self.blocked = ''
         self.collision_data = mujoco.MjData(model)
@@ -124,6 +162,7 @@ class PhysicsRuntime:
     def reset_targets(self):
         self.arm_target = kin.level_flange(self.model, self.info, kin.angles(self.data, self.info))
         self.command = self.arm_target.copy()
+        self.wrist_velocity = 0.
         self.data.ctrl[self.arm_act] = self.command
         self.remainder = 0.
         self.blocked = ''
@@ -141,8 +180,8 @@ class PhysicsRuntime:
             b1, b2 = int(self.model.geom_bodyid[g1]), int(self.model.geom_bodyid[g2])
             if b1 not in self.robot_bodies and b2 not in self.robot_bodies:
                 continue
-            if ((b1 == self.controller.plate and b2 in self.controller.finger_bodies) or
-                    (b2 == self.controller.plate and b1 in self.controller.finger_bodies)):
+            if ((b1 in self.controller.plate_bodies and b2 in self.controller.finger_bodies) or
+                    (b2 in self.controller.plate_bodies and b1 in self.controller.finger_bodies)):
                 continue
             pair = tuple(sorted((g1, g2)))
             depths[pair] = max(depths.get(pair, 0.), -float(contact.dist))
@@ -173,12 +212,26 @@ class PhysicsRuntime:
             delta = self.arm_target - self.command
             # One interpolation fraction preserves joint2+joint3+joint4=0.
             candidate = self.command + delta * min(1., .5*h / max(np.max(np.abs(delta)), 1e-12))
+            # Accelerate and brake the wrist in physics time, rather than
+            # sending a new angular-velocity step at every keyboard frame.
+            acceleration = 1.0  # rad/s^2
+            speed = min(.5, np.sqrt(2 * acceleration * abs(delta[4])))
+            desired = np.sign(delta[4]) * speed
+            velocity = self.wrist_velocity + np.clip(desired-self.wrist_velocity,
+                                                     -acceleration*h, acceleration*h)
+            step = velocity*h
+            if delta[4] * step >= 0 and abs(step) >= abs(delta[4]):
+                step = delta[4]
+                velocity = 0.
+            candidate[4] = self.command[4] + step
             if np.max(np.abs(delta)) > 1e-10:
                 if self.allow_command(candidate):
                     self.command = candidate
+                    self.wrist_velocity = velocity
                 else:
                     # Cancel the remaining push; a new target may retreat.
                     self.arm_target = self.command.copy()
+                    self.wrist_velocity = 0.
             self.data.ctrl[self.arm_act] = self.command
             mujoco.mj_step(self.model, self.data)
         self.remainder -= steps*h
@@ -190,6 +243,8 @@ class PhysicalGraspController:
         self.runtime = runtime
         self.model, self.data = runtime.model, runtime.data
         self.plate = self.model.body('reaction_plate').id
+        self.plate_bodies = {self.plate} | {i for i in range(self.model.nbody)
+            if (self.model.body(i).name or '').startswith('ot2_stack_plate_')}
         self.finger_bodies = [self.model.body(f'bio_gripper_{s}_finger').id for s in ('left', 'right')]
         self.act = [self.model.actuator(f'{s}_finger_position').id for s in ('left', 'right')]
         self.finger_q = [self.model.jnt_qposadr[self.model.joint(f'{s}_finger_joint').id]
@@ -204,19 +259,20 @@ class PhysicalGraspController:
     @property
     def held(self):
         """Both finger pads currently exert positive normal contact force."""
-        touching = set()
+        touching = {plate: set() for plate in self.plate_bodies}
         force = np.zeros(6)
         for n in range(self.data.ncon):
             contact = self.data.contact[n]
             bodies = [int(self.model.geom_bodyid[g]) for g in (contact.geom1, contact.geom2)]
-            if self.plate not in bodies:
+            plate = next((body for body in bodies if body in self.plate_bodies), None)
+            if plate is None:
                 continue
-            other = bodies[1] if bodies[0] == self.plate else bodies[0]
+            other = bodies[1] if bodies[0] == plate else bodies[0]
             if other in self.finger_bodies:
                 mujoco.mj_contactForce(self.model, self.data, n, force)
                 if force[0] > .02:
-                    touching.add(other)
-        return len(touching) == 2
+                    touching[plate].add(other)
+        return any(len(fingers) == 2 for fingers in touching.values())
 
     def jog_fingers(self, direction, dt, speed=.02):
         if direction not in (-1, 0, 1) or not np.isfinite(dt) or dt < 0:

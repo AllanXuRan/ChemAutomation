@@ -11,6 +11,8 @@ KEY_DIRECTIONS = {
 }
 
 
+ROTATION_KEYS = {'q': -1, 'e': 1}
+
 def direction(keys):
     vectors = {KEY_DIRECTIONS[k] for k in keys if k in KEY_DIRECTIONS}
     result = np.sum(list(vectors), axis=0) if vectors else np.zeros(3)
@@ -30,12 +32,20 @@ class CartesianJog:
         if not np.isfinite(dt) or dt <= 0:
             raise ValueError('无效时间间隔')
         delta = direction(keys) * speed * min(dt, .1)
-        if np.linalg.norm(delta) == 0:
+        rotation = sum(ROTATION_KEYS.get(key, 0) for key in keys)
+        if np.linalg.norm(delta) == 0 and rotation == 0:
             return None, None, None
         self.scratch.qpos[:] = data.qpos
         mujoco.mj_forward(self.model, self.scratch)
         q = kin.angles(self.scratch, self.info)
+        if rotation:
+            q[4] += rotation * np.radians(10.) * min(dt, .1)
+            q = kin.level_flange(self.model, self.info, q) if self.level else kin.clip_angles(self.model, self.info, q)
+            kin.set_angles(self.model, self.scratch, self.info, q)
         target = self.scratch.site_xpos[self.tcp].copy() + delta
+        if np.linalg.norm(delta) == 0:
+            return q, target, 0.
+
         result, error, _ = kin.jac_ik(
             self.model, self.scratch, self.info, self.tcp, target, q,
             tol=.00002, max_iters=30, damping=.01, level=self.level)

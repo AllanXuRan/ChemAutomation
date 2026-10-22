@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -81,6 +82,7 @@ def apply_geometry_defaults(config):
     o.setdefault('deck_vertical_offset_m', 0.0)
     # Fine placement relative to the selected slot in the OT-2 local XYZ frame.
     o.setdefault('temperature_offset_xyz_m', [0.0, 0.0, 0.0])
+    o.setdefault('temperature_block_offset_xyz_m', [0.0, 0.0, 0.0])
     # Migrate legacy slot-relative coordinates ONCE to independent OT-2 local XY.
     # Third component is a vertical offset relative to top of lower plinth.
     if 'temperature_local_xyz_m' not in o:
@@ -214,6 +216,9 @@ def validate_geometry(config):
         raise ValueError('plate.flat_surface_axes must be XY or XZ')
     if o.get('deck_mount_mode') not in ('on_base', 'custom'):
         raise ValueError('ot2.deck_mount_mode must be on_base or custom')
+    offset = o['temperature_block_offset_xyz_m']
+    if not isinstance(offset, (list, tuple)) or len(offset) != 3 or not all(math.isfinite(float(x)) for x in offset):
+        raise ValueError('ot2.temperature_block_offset_xyz_m needs finite X/Y/Z offsets')
     local = o['temperature_local_xyz_m']
     if not isinstance(local,(list,tuple)) or len(local)!=3 or not all(math.isfinite(float(z)) for z in local):
         raise ValueError('ot2.temperature_local_xyz_m needs finite X/Y/Z offsets')
@@ -317,7 +322,7 @@ def load_config(path=CONFIG):
         val = float(o.get(key, 0.0))
         if not math.isfinite(val):
             raise ValueError(f"Invalid OT-2 angle: {key}={val}")
-    if c["plate"]["start_at"] not in ("pickup", "reader", "waiting"):
+    if c["plate"]["start_at"] not in ("pickup", "reader", "waiting", "source"):
         raise ValueError("plate.start_at must be pickup / reader / waiting")
     for section, key in (('table', 'center_xy'), ('ot2', 'position_xy'), ('versamax', 'position_xy')):
         xy = c[section][key]
@@ -417,7 +422,9 @@ def targets(c):
     ph=plate_flat_size_m(p)[2]/2
     local_height=ot2_deck_surface_z(o)
     mx,my,mz=temperature_local_xyz(o)
-    tx=transform_xy((mx,my),o['position_xy'],o['yaw_deg'])
+    bx,by,bz=map(float,o['temperature_block_offset_xyz_m'])
+    dx,dy=rotate_xy((bx,by),o['temperature_yaw_deg'])
+    tx=transform_xy((mx+dx,my+dy),o['position_xy'],o['yaw_deg'])
     wx=transform_xy(ot2_slot_xy(o['waiting_slot']),o['position_xy'],o['yaw_deg'])
     sx=transform_xy(ot2_slot_xy(o['stack_slot']),o['position_xy'],o['yaw_deg'])
     v_local=versamax_local_regions(c)['tray_center_xy']
@@ -425,7 +432,7 @@ def targets(c):
     n=int(o['stack_count'])
     pitch=float(o['stack_plate_pitch_m'])
     return {
-      'ot2_pickup': (*tx,table_z+mz+float(o['temperature_base_size_m'][2])+float(o['temperature_block_size_m'][2])+ph),
+      'ot2_pickup': (*tx,table_z+mz+bz+float(o['temperature_base_size_m'][2])+float(o['temperature_block_size_m'][2])+ph),
       'ot2_waiting': (*wx,table_z+local_height+0.003+ph),
       'ot2_stack_top': (*sx,table_z+local_height+0.003+ph+(n-1)*pitch if n else table_z+local_height+0.003+ph),
       'versamax_load': (*vx,table_z+float(v['tray_surface_height_m'])+ph),
@@ -444,8 +451,17 @@ def camera_xyaxes(position, target):
     return fmt([*right, *up])
 
 
-def resolve_mesh_paths(root, urdf):
-    """Maintain compatibility with the existing exported robot MJCF meshes."""
+def scene_relative(path, scene_dir):
+    """Mesh path written as ../<path from the folder above the scene's folder>, so the scene
+    loads on any machine, from its own folder and from a folder beside it (the tests write
+    scene copies into temporary folders under the project root)."""
+    return "../" + Path(os.path.relpath(Path(path).resolve(), Path(scene_dir).resolve().parent)).as_posix()
+
+
+def resolve_mesh_paths(root, urdf, scene_dir=None):
+    """Maintain compatibility with the existing exported robot MJCF meshes. Paths are written
+    relative to scene_dir, the folder the scene is saved in (default: the URDF's folder)."""
+    scene_dir = urdf.parent if scene_dir is None else scene_dir
     asset = root.find("asset")
     if asset is None:
         return
@@ -458,7 +474,7 @@ def resolve_mesh_paths(root, urdf):
             continue
         source = Path(raw)
         if source.is_file():
-            node.set("file", source.resolve().as_posix())
+            node.set("file", scene_relative(source, scene_dir))
             continue
         candidates = [urdf.parent]
         if compiler is not None:
@@ -469,7 +485,7 @@ def resolve_mesh_paths(root, urdf):
         found = next((folder/source for folder in candidates if (folder/source).is_file()), None)
         if found is None:
             raise FileNotFoundError(f"Mesh/texture not found: {raw}; keep the complete xarm_description/meshes directory")
-        node.set("file", found.resolve().as_posix())
+        node.set("file", scene_relative(found, scene_dir))
     if compiler is not None:
         for attr in ("assetdir", "meshdir", "texturedir"):
             compiler.attrib.pop(attr, None)
@@ -691,9 +707,10 @@ def add_ot2(world,c):
     block_angle=float(o.get('temperature_block_yaw_deg',0))
     box(mod,'temperature_module_body',(0,0,bh/2),(bw/2,bd/2,bh/2),'temperature',
         quat=yaw_quat(base_angle))
-    box(mod,'temperature_aluminium_block',(0,0,bh+ah/2),(aw/2,ad/2,ah/2),
+    bx,by,bz=map(float,o['temperature_block_offset_xyz_m'])
+    box(mod,'temperature_aluminium_block',(bx,by,bh+ah/2+bz),(aw/2,ad/2,ah/2),
         'temperature_top',quat=yaw_quat(block_angle))
-    box(mod,'temperature_contact_plate',(0,0,bh+ah-.0003),
+    box(mod,'temperature_contact_plate',(bx,by,bh+ah-.0003+bz),
         (max(.002,aw/2-.002),max(.002,ad/2-.002),.0003),'temperature',
         contype='0',conaffinity='0',quat=yaw_quat(block_angle))
     wx,wy=ot2_slot_xy(o['waiting_slot'])
@@ -806,8 +823,14 @@ def add_versamax(world, c):
 def add_reaction_plate(world, c, place):
     p=c["plate"]
     t=targets(c)
-    point=t[{"pickup":"ot2_pickup","reader":"versamax_load","waiting":"ot2_waiting"}[place]]
-    if place == "reader":
+    if place == 'source':
+        source=p['source_stack']
+        point=(*source['position_xy_m'],float(c['table']['top_z'])+plate_flat_size_m(p)[2]/2)
+    else:
+        point=t[{"pickup":"ot2_pickup","reader":"versamax_load","waiting":"ot2_waiting"}[place]]
+    if place == 'source':
+        yaw=float(p['source_stack']['yaw_deg'])
+    elif place == "reader":
         yaw=float(c["versamax"]["yaw_deg"])
     elif place == "pickup":
         # Reaction plate follows the temperature aluminium block, NOT its base.
@@ -825,6 +848,29 @@ def add_reaction_plate(world, c, place):
        mass="0.055",material="plate",friction="0.8 0.006 0.0001",
        contype="1",conaffinity="1")
     add_96_well_markers(body,"reaction",phalf)
+
+
+def add_source_stack(world,c):
+    if c['plate']['start_at'] != 'source':
+        return
+    source=c['plate']['source_stack']
+    count=source['count']
+    if type(count) is not int or count<1:
+        raise ValueError('source_stack.count must be a positive integer')
+    x,y=map(float,source['position_xy_m'])
+    yaw=float(source['yaw_deg'])
+    gap=float(source['gap_m'])
+    if not all(math.isfinite(v) for v in (x,y,yaw,gap)) or gap<0:
+        raise ValueError('Invalid source stack coordinates or gap')
+    half=[float(v)/2 for v in plate_flat_size_m(c['plate'])]
+    for index in range(1,count):
+        name=f'ot2_stack_plate_{index}'
+        z=float(c['table']['top_z'])+half[2]+index*(2*half[2]+gap)
+        body=el(world,'body',name=name+'_body',pos=fmt((x,y,z)),quat=yaw_quat(yaw))
+        el(body,'freejoint',name=name+'_free')
+        el(body,'geom',name=name,type='box',size=fmt(half),mass='0.038',material='plate',
+           friction='0.8 0.005 0.0001',contype='1',conaffinity='1')
+        add_96_well_markers(body,name,half)
 
 
 def add_target_sites(world, c):
@@ -967,7 +1013,7 @@ def build(c, urdf, output, plate_at):
     tree=ET.parse(robot_xml)
     root=tree.getroot()
     root.set("model","xArm5 Bio G2 - OT2 and VersaMax | base-origin frame")
-    resolve_mesh_paths(root,urdf)
+    resolve_mesh_paths(root,urdf,output.parent)
     materials(root)
     world=robot_at_world_origin(root)
     print("[3/4] Adding table, slotted OT-2, thermal block, plate stack, VersaMax...")
@@ -975,6 +1021,7 @@ def build(c, urdf, output, plate_at):
     add_ot2(world,c)
     add_versamax(world,c)
     add_reaction_plate(world,c,plate_at)
+    add_source_stack(world,c)
     add_target_sites(world,c)
     add_lights_and_cameras(world,c)
     add_visual(root)
@@ -1015,7 +1062,7 @@ def main():
     p.add_argument("--urdf",type=Path,default=URDF)
     p.add_argument("--build-only",action="store_true")
     p.add_argument("--print-layout",action="store_true",help="Print target points without requiring MuJoCo")
-    p.add_argument("--plate-at",choices=("pickup","reader","waiting"),default=None)
+    p.add_argument("--plate-at",choices=("pickup","reader","waiting","source"),default=None)
     a=p.parse_args()
     c=load_config(a.config)
     plate_at=a.plate_at or c["plate"]["start_at"]

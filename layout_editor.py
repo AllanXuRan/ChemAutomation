@@ -128,6 +128,18 @@ class LayoutEditor:
         ttk.Button(right,text='应用模块自由 XYZ',
                    command=self.apply_temperature_offset).pack(fill='x',pady=4)
         ttk.Label(right,text='等待区/堆叠区位置（仅用编号定位）',font=('Segoe UI',10,'bold')).pack(anchor='w',pady=(8,3))
+        ttk.Label(right,text='上方铝板独立偏移 (温控模块坐标, m)',
+                  font=('Segoe UI',10,'bold')).pack(anchor='w',pady=(8,3))
+        self.block_offset={}
+        for i,axis in enumerate(('X','Y','Z')):
+            fr=ttk.Frame(right);fr.pack(fill='x',pady=2)
+            ttk.Label(fr,text=f'上方铝板 {axis}',width=16).pack(side='left')
+            var=tk.StringVar(value=str(self.data['ot2']['temperature_block_offset_xyz_m'][i]))
+            ent=ttk.Entry(fr,width=9,textvariable=var);ent.pack(side='left')
+            ent.bind('<Return>',lambda e:self.apply_block_offset())
+            self.block_offset[axis]=var
+        ttk.Button(right,text='应用铝板 XYZ',command=self.apply_block_offset).pack(fill='x',pady=4)
+        ttk.Label(right,text='Alt + 拖动铝板：独立调整 XY').pack(anchor='w')
         self.slots={}
         for key,text,values in [
             ('waiting_slot','返回等待槽位',tuple(range(1,12))),
@@ -242,6 +254,19 @@ class LayoutEditor:
             messagebox.showerror('温控模块位置错误',str(exc))
             return False
 
+    def apply_block_offset(self):
+        try:
+            values=[float(self.block_offset[axis].get()) for axis in ('X','Y','Z')]
+            if not all(math.isfinite(v) for v in values):
+                raise ValueError('Aluminium block XYZ must be finite')
+            self.data['ot2']['temperature_block_offset_xyz_m']=values
+            self.draw()
+            self.msg.set('铝板位置已更新；请保存并重新生成 XML。')
+            return True
+        except ValueError as exc:
+            messagebox.showerror('Invalid aluminium position',str(exc))
+            return False
+
     def face_robot(self):
         if not self.apply_fields():
             return
@@ -252,6 +277,20 @@ class LayoutEditor:
         self.msg.set('两台设备开口现在会持续指向机器人；拖动也会自动更新角度。')
 
     def mouse_down(self,e):
+        # Alt-drag the upper block without moving its base or instrument.
+        if e.state & 0x20000 or e.state & 0x0008:
+            o=self.data['ot2']
+            bx,by=rotate(o['temperature_block_offset_xyz_m'][:2],float(o['temperature_yaw_deg']))
+            mx,my=o['temperature_local_xyz_m'][:2]
+            dx,dy=rotate((mx+bx,my+by),float(o['yaw_deg']))
+            px,py=xy_screen((o['position_xy'][0]+dx,o['position_xy'][1]+dy))
+            aw,ad,_=o['temperature_block_size_m']
+            yaw=float(o['yaw_deg'])+float(o['temperature_yaw_deg'])+float(o['temperature_block_yaw_deg'])
+            hx,hy=rotate(((e.x-px)/SCALE,-(e.y-py)/SCALE),-yaw)
+            if abs(hx)<=aw/2 and abs(hy)<=ad/2:
+                self.drag=('block',e.x,e.y,list(o['temperature_block_offset_xyz_m'][:2]))
+                return
+
         # Ctrl + left-drag the temperature module, independently of OT-2.
         # This changes its local XY in the OT-2 base coordinate frame.
         if e.state & 0x0004:
@@ -274,6 +313,16 @@ class LayoutEditor:
     def mouse_drag(self,e):
         if self.drag is None:return
         which,px,py,origin=self.drag
+        if which=='block':
+            o=self.data['ot2']
+            yaw=float(o['yaw_deg'])+float(o['temperature_yaw_deg'])
+            dx,dy=rotate(((e.x-px)/SCALE,-(e.y-py)/SCALE),-yaw)
+            xyz=o['temperature_block_offset_xyz_m']
+            xyz[0],xyz[1]=round(origin[0]+dx,4),round(origin[1]+dy,4)
+            for i,axis in enumerate(('X','Y')):
+                self.block_offset[axis].set(str(xyz[i]))
+            self.draw()
+            return
         if which=='temperature':
             yaw=float(self.data['ot2']['yaw_deg'])
             dx,dy=rotate(((e.x-px)/SCALE,-(e.y-py)/SCALE), -yaw)
@@ -359,7 +408,9 @@ class LayoutEditor:
         bw,bd,_=o['temperature_base_size_m']
         aw,ad,_=o['temperature_block_size_m']
         cv.create_polygon(corners(centre,bw,bd,base_deg),fill='#94a3b8',outline='#475569',width=1)
-        cv.create_polygon(corners(centre,aw,ad,block_deg),fill='#f9e2a3',outline='#d97706',width=2)
+        bx,by=rotate(o['temperature_block_offset_xyz_m'][:2],float(o['yaw_deg'])+float(o['temperature_yaw_deg']))
+        block_centre=(centre[0]+bx,centre[1]+by)
+        cv.create_polygon(corners(block_centre,aw,ad,block_deg),fill='#f9e2a3',outline='#d97706',width=2)
 
         # Reader notch (RED) and moving tray (YELLOW), same positions/sizes as 3D.
         v=self.data['versamax']
@@ -383,6 +434,15 @@ class LayoutEditor:
                           fill='#ffe6a3',outline='#eab308',width=2)
         cv.create_text(*xy_screen(tray_center),text='Plate Tray',
                        font=('Segoe UI',8),fill='#7c2d12')
+        source=self.data['plate'].get('source_stack')
+        if self.data['plate'].get('start_at')=='source' and source:
+            xy=source['position_xy_m']
+            size=self.data['plate']['size_m']
+            width,depth=(size[0],size[2]) if self.data['plate'].get('flat_surface_axes')=='XZ' else size[:2]
+            cv.create_polygon(corners(xy,width,depth,float(source['yaw_deg'])),
+                              fill='#fef3c7',outline='#b45309',width=3)
+            sx,sy=xy_screen(xy)
+            cv.create_text(sx,sy-25,text=f"Source x{source['count']} (table)",fill='#92400e',font=('Segoe UI',9,'bold'))
         cx,cy=xy_screen((0,0))
         cv.create_oval(cx-21,cy-21,cx+21,cy+21,fill='#e9a8a7',outline='#b91c1c',width=2)
         cv.create_text(cx,cy,text='xArm5',font=('Segoe UI',8,'bold'))
@@ -497,6 +557,8 @@ class LayoutEditor:
         if not self.apply_slots() or not self.apply_temperature_angles():
             return False
         if not self.apply_temperature_offset():
+            return False
+        if not self.apply_block_offset():
             return False
         apply_geometry_defaults(self.data)
         canonicalize_facing(self.data)

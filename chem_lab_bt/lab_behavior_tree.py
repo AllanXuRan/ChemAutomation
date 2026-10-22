@@ -1,4 +1,4 @@
-"""Editable chemistry-lab Behavior Tree skeleton (MOCK mode only).
+"""Chemistry-lab behavior tree with mock and MuJoCo action backends.
 
 Robot task: formulation inspection -> grasp -> transfer -> align/measure -> storage.
 Faults: bubble/tip -> quarantine (MOCK); grasp/alignment/placement -> bounded retry;
@@ -9,13 +9,14 @@ Install: python -m pip install 'py_trees>=2.2,<3'
 Run:     python lab_behavior_tree.py --plates 3 --scenario scenarios.json --compact
          python lab_behavior_tree.py --inject align --trace --tick-seconds 0
 
-This program does not connect to MuJoCo, xArm5, G2 or lab instruments yet.
+MuJoCo runs the verified four-plate workflow. No real robot/instrument commands.
 """
 from __future__ import annotations
 
 import argparse
 import json
 import time
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
@@ -63,6 +64,13 @@ class Blackboard:
     measured_plates: int = 0
     human_interventions_required: int = 0
     compact_log: bool = False
+    selected_body: Optional[str] = None
+    plate_location: str = 'source'
+    source_remaining: int = 4
+    storage_count: int = 0
+    active_action: str = ''
+    last_error: str = ''
+    reader_complete: bool = False
 
     def next_plate(self) -> None:
         if self.emergency_latched:
@@ -70,6 +78,9 @@ class Blackboard:
         self.plate_id += 1
         self.completed.clear()
         self.current_stage = "idle"
+        self.selected_body = None
+        self.active_action = ""
+        self.reader_complete = False
         self.plate_finished = False
         self.plate_outcome = ""
         self.carrying_plate = False
@@ -181,7 +192,7 @@ def load_scenarios(path: Path) -> dict[int, list[ScenarioEvent]]:
 
 
 class RobotBackend:
-    """THE future integration boundary for MuJoCo / real xArm.
+    """Action integration boundary for mock, MuJoCo and future hardware.
 
     start_action(): issue a command exactly once (non-blocking).
     poll_action(): return RUNNING/SUCCESS/FAILURE, without restarting it.
@@ -328,8 +339,9 @@ class PreventSlip(AsyncAction):
     def __init__(self, state: Blackboard, backend: RobotBackend, settings: Settings):
         self.settings = settings
         def on_success():
-            # MOCK ONLY: future real backend must confirm reduced slip risk.
-            state.slip_risk = 0.05
+            # Physical backend verifies stabilisation before this callback.
+            if not getattr(backend, 'physical_flow', False):
+                state.slip_risk = 0.05
             state.preventive_interventions += 1
             state.preventive_this_plate += 1
             announce(state, "PREVENT slip risk reduced; resume interrupted task")
@@ -377,6 +389,8 @@ class RetryRecovery(py_trees.behaviour.Behaviour):
             self.started = True
         result = self.backend.poll_action(self.name)
         if result == Status.SUCCESS:
+            if hasattr(self.backend, 'recovery_cache_keys'):
+                self.state.completed.difference_update(self.backend.recovery_cache_keys(self.kind))
             self.state.fault = None
             self.state.recovery_actions_completed[self.kind] += 1
             # A failed insertion may have already passed the alignment check.
@@ -497,7 +511,7 @@ def build_tree(state: Blackboard, backend: RobotBackend, settings: Settings):
           state.slip_risk >= settings.slip_threshold),
         PreventSlip(state, backend, settings))
 
-    # ===== 4. NORMAL FLOW (your updated figure, expanded at reader) =====
+    # ===== 4. MOCK normal flow; MuJoCo uses workflow_nodes.py below. =====
     # The diagram says Alignment -> Return to Slot; we explicitly keep the
     # necessary reader handoff/measurement/retrieval steps between them.
     main = seq('04_NORMAL_ONE_PLATE',
@@ -532,6 +546,10 @@ def build_tree(state: Blackboard, backend: RobotBackend, settings: Settings):
         FinishPlate(state, outcome='measured'),
     )
 
+    if getattr(backend, 'physical_flow', False):
+        from chem_lab_bt.workflow_nodes import build_physical_flow
+        main = build_physical_flow(state, backend, settings, a, seq, FinishPlate)
+
     root = py_trees.composites.Selector(
         name='ROOT_PRIORITY_SELECTOR', memory=False,
         children=[safety, recovery, preventive, main])
@@ -555,7 +573,7 @@ def load_settings(path: Path) -> Settings:
     return obj
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description="Chemical lab BT skeleton — mock only")
     parser.add_argument("--config", type=Path, default=BASE / "bt_config.json")
     parser.add_argument("--plates", type=int, help="Override number of plates")
@@ -567,7 +585,12 @@ def main():
     output_group = parser.add_mutually_exclusive_group()
     output_group.add_argument("--compact", action="store_true", help="Show key milestones and fault/recovery events only")
     output_group.add_argument("--trace", action="store_true", help="Print root/stage after every tick")
-    args = parser.parse_args()
+    parser.add_argument('--backend',choices=('mock','mujoco'),default='mock')
+    parser.add_argument('--headless',action='store_true')
+    parser.add_argument('--speed',type=float,default=4.)
+    parser.add_argument('--max-ticks',type=int)
+    parser.add_argument('--no-keep-open',action='store_true',help='Close viewer after the batch')
+    args = parser.parse_args(argv)
 
     settings = load_settings(args.config)
     if args.plates is not None:
@@ -589,10 +612,30 @@ def main():
     if any(plate_id > settings.plates for plate_id in scenarios):
         print('NOTE: events configured for plates beyond the --plates limit will not run.')
 
+    if args.backend=='mujoco':
+        if scenarios:parser.error('Fault injection scenarios are mock-only; physical faults come from the simulator')
+        if not 1<=settings.plates<=4:parser.error('MuJoCo source contains four plates')
+        if not 0<args.speed<float('inf'):parser.error('Speed must be finite and positive')
+        settings.max_ticks=max(settings.max_ticks,250000)
+        if args.tick_seconds is None:settings.tick_seconds=0.
+    if args.max_ticks is not None:
+        if args.max_ticks<1:parser.error('max-ticks must be positive')
+        settings.max_ticks=args.max_ticks
     state = Blackboard(compact_log=args.compact)
-    backend = MockBackend(state, settings, scenarios=scenarios)
+    if args.backend=='mujoco':
+        if str(BASE.parent) not in sys.path:sys.path.insert(0,str(BASE.parent))
+        from chem_lab_bt.mujoco_backend import MuJoCoBackend
+        backend=MuJoCoBackend(state,settings,headless=args.headless,speed=args.speed)
+    else:
+        backend = MockBackend(state, settings, scenarios=scenarios)
     tree = build_tree(state, backend, settings)
-    print("=== xArm5 chemical laboratory BT (MOCK ONLY; NO ROBOT COMMANDS) ===")
+    if args.backend=='mujoco':
+        def describe(node,depth=0):
+            lines=['  '*depth+type(node).__name__+': '+node.name]
+            for child in getattr(node,'children',[]):lines.extend(describe(child,depth+1))
+            return lines
+        (BASE.parent/'outputs'/'bt_tree.txt').write_text('\n'.join(describe(tree.root))+'\n',encoding='utf-8')
+    print(f"=== xArm5 chemical laboratory BT ({args.backend.upper()}) ===",flush=True)
     print(f"Plan: {settings.plates} plates; scenario=" +
           (str(args.scenario) if args.scenario else f"legacy --inject {args.inject}"))
     for plate_id in sorted(scenarios):
@@ -601,51 +644,75 @@ def main():
                          for ev in scenarios[plate_id]) or 'none'
         print(f'  Plate {plate_id}: {desc}')
 
-    finished = 0
-    for tick_no in range(1, settings.max_ticks + 1):
-        state.tick_number = tick_no
-        # For real hardware, refresh sensor state outside of tree.tick() here,
-        # or have a separate thread updating a thread-safe shared state.
-        tree.tick()
-        if args.trace:
-            print(f"  TICK {tick_no:03d}: root={tree.root.status.name}; "
-                  f"stage={state.current_stage}; completed={len(state.completed)}; "
-                  f"fault={state.fault}; risk={state.slip_risk:.2f}")
+    try:
+        finished = 0
+        for tick_no in range(1, settings.max_ticks + 1):
+            state.tick_number = tick_no
+            if hasattr(backend, "advance"):
+                backend.advance()
+            tree.tick()
+            if args.trace:
+                print(f"  TICK {tick_no:03d}: root={tree.root.status.name}; "
+                      f"stage={state.current_stage}; completed={len(state.completed)}; "
+                      f"fault={state.fault}; risk={state.slip_risk:.2f}")
 
-        if state.emergency_latched:
-            if not state.stop_sent:
-                # Ensures latched-stop handler ticks before leaving the runner.
-                tree.tick()
-            state.human_interventions_required += 1
-            print(f"\nHALTED: {state.emergency_reason}; manual review required (MOCK)")
-            break
-
-        if state.plate_finished:
-            print(f'  => Plate {state.plate_id}: {state.plate_outcome.upper()}')
-            pending = [(ev.kind, ev.remaining) for ev in scenarios.get(state.plate_id, []) if ev.remaining]
-            if pending:
-                print(f'  NOTE: untriggered scenario events on Plate {state.plate_id}: {pending}')
-            finished += 1
-            if finished >= settings.plates:
-                print("\nBATCH FINISHED (MOCK)")
+            if state.emergency_latched:
+                if not state.stop_sent:
+                    # Ensures latched-stop handler ticks before leaving the runner.
+                    tree.tick()
+                state.human_interventions_required += 1
+                print(f"\nHALTED: {state.emergency_reason}; manual review required")
                 break
-            # Invalidate composite memory; cached stages reset for next plate.
-            tree.root.stop(Status.INVALID)
-            state.next_plate()
-            announce(state, "NEXT PLATE")
 
-        time.sleep(settings.tick_seconds)
-    else:
-        print("\nTIMEOUT: max_ticks exceeded; inspect RUNNING stage / faults")
+            if state.plate_finished:
+                print(f'  => Plate {state.plate_id}: {state.plate_outcome.upper()}')
+                pending = [(ev.kind, ev.remaining) for ev in scenarios.get(state.plate_id, []) if ev.remaining]
+                if pending:
+                    print(f'  NOTE: untriggered scenario events on Plate {state.plate_id}: {pending}')
+                finished += 1
+                if finished >= settings.plates:
+                    print(f"\nBATCH FINISHED ({args.backend.upper()})",flush=True)
+                    break
+                # Invalidate composite memory; cached stages reset for next plate.
+                tree.root.stop(Status.INVALID)
+                state.next_plate()
+                announce(state, "NEXT PLATE")
 
-    print("SUMMARY:", {
-        "plates_finished": finished,
-        "measured": state.measured_plates,
-        "rejected": state.rejected_plates,
-        "preventive_interventions": state.preventive_interventions,
-        "recoveries_completed": state.recovery_actions_completed,
-        "human_interventions_required": state.human_interventions_required,
-    })
+            time.sleep(settings.tick_seconds)
+        else:
+            print("\nTIMEOUT: max_ticks exceeded; inspect RUNNING stage / faults")
+
+        summary = {
+            "plates_finished": finished,
+            "measured": state.measured_plates,
+            "rejected": state.rejected_plates,
+            "preventive_interventions": state.preventive_interventions,
+            "recoveries_completed": state.recovery_actions_completed,
+            "human_interventions_required": state.human_interventions_required,
+        }
+        print("SUMMARY:", summary,flush=True)
+
+        if hasattr(backend,'finalize'):backend.finalize(finished)
+        summary['success']=finished==settings.plates and not state.emergency_latched
+        if hasattr(backend,'motion'):summary['records']=backend.motion.records
+        if summary['success'] and hasattr(backend,'keep_open') and not args.no_keep_open:backend.keep_open()
+        return summary
+    except KeyboardInterrupt:
+        state.last_error='Simulation closed or interrupted before batch completion'
+        if hasattr(backend,'emergency_stop'):backend.emergency_stop()
+        if hasattr(backend,'finalize'):backend.finalize(finished)
+        print(state.last_error,flush=True)
+        return {'success':False,'plates_finished':finished,'records':getattr(getattr(backend,'motion',None),'records',[])}
+    except Exception as exc:
+        state.emergency_latched=True
+        state.emergency_reason=str(exc)
+        state.last_error=str(exc)
+        backend.emergency_stop()
+        if hasattr(backend,'finalize'):backend.finalize(finished)
+        raise
+    finally:
+        tree.root.stop(Status.INVALID)
+        if hasattr(backend,'close'):backend.close()
 
 
 if __name__ == "__main__":

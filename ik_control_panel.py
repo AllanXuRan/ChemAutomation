@@ -14,7 +14,8 @@ import json
 import math
 import time
 import tkinter as tk
-from datetime import datetime
+from uuid import uuid4
+from datetime import datetime, timezone
 from pathlib import Path
 from tkinter import ttk, messagebox
 
@@ -24,15 +25,81 @@ import numpy as np
 
 import robot_kinematics as kin
 from grasp_workflow import WorkflowPanel
-from keyboard_ee import CartesianJog, KEY_DIRECTIONS
+from keyboard_ee import CartesianJog, KEY_DIRECTIONS, ROTATION_KEYS
 from physics_runtime import PhysicsRuntime, load_physics_model
 from state_capture import StateRecorder
 
 ROOT = Path(__file__).resolve().parent
 SCENE = ROOT / 'xarm_description' / 'xarm5_lab_fk_camera.xml'
 OUTPUT_POSE = ROOT / 'last_ik_pose.json'
+RECORDS_DIR = ROOT / 'ik_records'
+INITIAL_POSE = RECORDS_DIR / 'initial_pose.json'
 CAMERAS = ('Free camera', 'global_overhead', 'wrist_gripper', 'plate_overhead')
 DEFAULT_TARGETS = ('ot2_pickup', 'versamax_load', 'ot2_waiting', 'ot2_stack_top')
+
+
+def append_pose_notebook(record, path):
+    """Append a snapshot that can be read without running notebook cells."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    notebook = json.loads(path.read_text(encoding='utf-8')) if path.exists() else None
+    if notebook is None or not notebook.get('metadata', {}).get('ik_pose_history'):
+        notebook = {
+            'cells': [{'cell_type': 'markdown', 'id': 'intro', 'metadata': {},
+                       'source': ['# IK pose history\n',
+                                  'Updated by the IK Save button. World coordinates in metres. No cell execution required.\n']}],
+            'metadata': {'ik_pose_history': True}, 'nbformat': 4, 'nbformat_minor': 5,
+        }
+    saved = dict(record)
+    saved['saved_at_utc'] = datetime.now(timezone.utc).isoformat()
+    saved['position_error_mm'] = math.dist(saved['tcp_xyz_world_m'], saved['goal_xyz_world_m']) * 1000
+    number = len(notebook['cells'])
+    body = (f"## Pose {number} - {saved['saved_at_utc']}\n\n"
+            f"Position error: {saved['position_error_mm']:.4f} mm\n\n"
+            '```json\n' + json.dumps(saved, ensure_ascii=False, indent=2, allow_nan=False) + '\n```\n')
+    notebook['cells'].append({'cell_type': 'markdown', 'id': f'pose-{number}',
+                              'metadata': {'ik_pose': saved}, 'source': body.splitlines(keepends=True)})
+    payload = json.dumps(notebook, ensure_ascii=False, indent=2, allow_nan=False)
+    temporary = path.with_suffix('.ipynb.tmp')
+    temporary.write_text(payload, encoding='utf-8')
+    temporary.replace(path)
+    return number
+
+
+def create_session_notebook(directory=RECORDS_DIR):
+    """Create a distinct empty history for each invocation of main()."""
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S_%f')
+    path = directory / f'ik_session_{stamp}_{uuid4().hex[:8]}.ipynb'
+    notebook = {
+        'cells': [{'cell_type': 'markdown', 'id': 'intro', 'metadata': {},
+                   'source': ['# IK session pose history\n',
+                              'Each Save click appends a pose to this session. World coordinates in metres.\n']}],
+        'metadata': {'ik_pose_history': True,
+                     'session_started_at_utc': datetime.now(timezone.utc).isoformat()},
+        'nbformat': 4, 'nbformat_minor': 5,
+    }
+    with path.open('x', encoding='utf-8') as stream:
+        json.dump(notebook, stream, ensure_ascii=False, indent=2)
+    return path
+
+
+def load_initial_pose(model, info, pose_path=INITIAL_POSE):
+    """Load only the fixed initial pose, never a session's last snapshot."""
+    source = Path(pose_path)
+    if not source.exists():
+        return None, None
+    record = json.loads(source.read_text(encoding='utf-8'))
+    q = np.asarray(record['joint_angles_rad'], dtype=float)
+    if q.shape != (len(info),) or not np.all(np.isfinite(q)):
+        raise ValueError(f'Invalid saved joint angles: {source}')
+    for angle, (jid, _, _) in zip(q, info):
+        if model.jnt_limited[jid]:
+            lo, hi = model.jnt_range[jid]
+            if not lo <= angle <= hi:
+                raise ValueError(f'Saved joint angle outside limits: {source}')
+    return q.copy(), source
 
 
 def actuator_hold(model, data, joint_positions):
@@ -56,12 +123,25 @@ def main():
     goal_id = kin.site_id(model, 'ik_target')
 
     data.qpos[:] = model.qpos0
-    q0 = kin.level_flange(model, info, kin.Q0)
+    initial_message = ''
+    try:
+        q0, initial_source = load_initial_pose(model, info)
+    except (OSError, ValueError, TypeError, KeyError) as exc:
+        q0, initial_source = None, None
+        initial_message = f'Saved pose could not be loaded; using default: {exc}'
+        print(initial_message)
+    if q0 is None:
+        q0 = kin.level_flange(model, info, kin.Q0)
+    else:
+        initial_message = f'Initial pose loaded: {initial_source}'
+        print(initial_message)
     kin.set_angles(model, data, info, q0)
     actuator_hold(model, data, q0)
     mujoco.mj_forward(model, data)
     physics = PhysicsRuntime(model, data, info)
     jog_data = mujoco.MjData(model)
+    session_notebook = create_session_notebook()
+    print(f'Session notebook: {session_notebook}')
 
     targets = []
     for name in DEFAULT_TARGETS:
@@ -115,7 +195,7 @@ def main():
     ttk.Label(keyboard_box, text='速度 (m/s)').pack(side='left')
     ttk.Entry(keyboard_box, textvariable=keyboard_speed, width=7).pack(side='left', padx=5)
     keyboard_pad = tk.Label(keyboard_box, takefocus=True, relief='groove', padx=10, pady=8,
-                            text='点击这里启用：A/D −X/+X · W/S +Y/−Y · Ctrl/Space −Z/+Z\n按住 Q 渐闭 · E 渐开；松键停止；Esc 退出', bg='#eeeeee')
+                            text='Q/E: 法兰反向/正向旋转 (10 deg/s)\n点击这里启用：A/D −X/+X · W/S +Y/−Y · Ctrl/Space −Z/+Z\n按住 1 渐闭 · 3 渐开；松键停止；Esc 退出', bg='#eeeeee')
     keyboard_pad.pack(side='left', fill='x', expand=True)
     jog = CartesianJog(model, info, tcp_id, level=True)
     pressed_keys = set()
@@ -137,13 +217,13 @@ def main():
             keyboard_stop()
             root.focus_set()
             return 'break'
-        if key in ('q', 'e'):
+        if key in ('1', '3'):
             if key not in pressed_keys:
                 moving['active'] = False
                 workflow.stop()
                 pressed_keys.add(key)
             return 'break'
-        if key in KEY_DIRECTIONS:
+        if key in KEY_DIRECTIONS or key in ROTATION_KEYS:
             moving['active'] = False
             workflow.stop()
             pressed_keys.add(key)
@@ -151,7 +231,7 @@ def main():
 
     def keyboard_release(event):
         pressed_keys.discard(event.keysym.lower())
-        if event.keysym.lower() in KEY_DIRECTIONS or event.keysym.lower() in ('q', 'e'):
+        if event.keysym.lower() in KEY_DIRECTIONS or event.keysym.lower() in ROTATION_KEYS or event.keysym.lower() in ('1', '3'):
             return 'break'
 
     keyboard_pad.bind('<Button-1>', keyboard_enable)
@@ -167,6 +247,8 @@ def main():
               'duration': 1.8}
 
     info_text = tk.StringVar(value='准备就绪。选择目标并点击 IK 按钮。')
+    if initial_message:
+        info_text.set(initial_message)
     pose_text = tk.StringVar(value='')
     status_label = ttk.Label(frame, textvariable=info_text, wraplength=670,
                              foreground='#12578a')
@@ -325,7 +407,10 @@ def main():
     bottom.pack(fill='x', pady=(10, 2))
     def return_initial():
         pause_manual()
-        apply_q(q0, True)
+        with viewer.lock():
+            physics.set_arm_target(q0.copy())
+        update_slider_labels(q0)
+        show_fk()
 
     ttk.Button(bottom, text='回到初始姿态', command=return_initial).pack(side='left', padx=4)
     ttk.Button(bottom, text='刷新 FK', command=show_fk).pack(side='left', padx=4)
@@ -337,8 +422,13 @@ def main():
         record = {'tcp_xyz_world_m': p.tolist(), 'tcp_R_world': R.tolist(),
                   'joint_angles_rad': q.tolist(), 'joint_angles_deg': np.degrees(q).tolist(),
                   'goal_xyz_world_m': goal_xyz().tolist()}
-        OUTPUT_POSE.write_text(json.dumps(record, indent=2), encoding='utf-8')
-        info_text.set(f'关节与 TCP 位姿已保存：{OUTPUT_POSE.name}')
+        try:
+            OUTPUT_POSE.write_text(json.dumps(record, indent=2), encoding='utf-8')
+            count = append_pose_notebook(record, session_notebook)
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            messagebox.showerror('Save failed', str(exc))
+            return
+        info_text.set(f'Pose saved; notebook updated ({count} records): {session_notebook}')
 
     ttk.Button(bottom, text='保存当前关节姿态', command=save_pose).pack(side='left', padx=4)
 
@@ -400,7 +490,14 @@ def main():
         ttk.Button(camera_box, text='抓取流程示教', command=workflow.open).pack(side='left', padx=6)
         ttk.Button(camera_box, text='重置仿真', command=workflow.reset).pack(side='left', padx=6)
         update_slider_labels(q0)
-        if targets:
+        if initial_source is not None:
+            tk_target.set('Manual XYZ')
+            offset_field.set('0')
+            initial_xyz, _ = kin.tcp_pose(data, tcp_id)
+            for field, value in zip(goal_fields, initial_xyz):
+                field.set(f'{value:.5f}')
+            set_goal_marker()
+        elif targets:
             set_goal_for(targets[0])
         camera_switch()
         show_fk()
@@ -413,10 +510,10 @@ def main():
             dt = now - keyboard_clock[0]
             keyboard_clock[0] = now
             if root.focus_get() == keyboard_pad:
-                grip_direction = int('q' in pressed_keys) - int('e' in pressed_keys)
+                grip_direction = int('1' in pressed_keys) - int('3' in pressed_keys)
                 if grip_direction:
                     jog_gripper(grip_direction, dt)
-            if pressed_keys.intersection(KEY_DIRECTIONS) and root.focus_get() == keyboard_pad:
+            if pressed_keys.intersection(set(KEY_DIRECTIONS) | set(ROTATION_KEYS)) and root.focus_get() == keyboard_pad:
                 try:
                     with viewer.lock():
                         jog_data.qpos[:] = data.qpos

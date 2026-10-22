@@ -28,3 +28,7 @@ videos/
 
 # Intermediate robot export recreated by build_lab_scene.py
 /xarm_description/xarm5_robot_exported.xml
+
+# MuJoCo diagnostics and notebook checkpoints
+MUJOCO_LOG.TXT
+.ipynb_checkpoints/

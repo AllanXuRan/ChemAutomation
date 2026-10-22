@@ -19,7 +19,7 @@
   "ot2_temperature_slot": 6,
   "ot2_waiting_slot": 3,
   "ot2_stack_slot": 2,
-  "ot2_stack_count": 3,
+  "ot2_stack_count": 0,
   "ot2_xy": [
     -0.36,
     0.67
@@ -93,10 +93,10 @@
     0.084,
     0.015
   ],
-  "reaction_plate_start": "pickup",
+  "reaction_plate_start": "source",
   "targets_robot_base_frame": {
     "ot2_pickup": [
-      -0.18999999999999997,
+      -0.21999999999999997,
       0.625,
       0.1695
     ],
@@ -108,7 +108,7 @@
     "ot2_stack_top": [
       -0.36,
       0.5342500000000001,
-      0.10250000000000001
+      0.0685
     ],
     "versamax_load": [
       0.07,
@@ -117,7 +117,7 @@
     ]
   },
   "horizontal_distance_from_robot_base": {
-    "ot2_pickup": 0.653,
+    "ot2_pickup": 0.663,
     "ot2_waiting": 0.581,
     "ot2_stack_top": 0.644,
     "versamax_load": 0.455

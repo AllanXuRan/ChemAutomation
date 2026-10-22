@@ -89,7 +89,9 @@ def add_dynamic_plate(world, config):
     pose = [float(x) for x in plate.get("pos", "0 0 0").split()]
     if len(pose) != 3:
         raise RuntimeError("Reaction plate must have a 3D body position")
-    pose[2] += float(config["plate_initial_lift_m"])
+    # A tabletop source stack has neighbouring plates immediately above it.
+    lift = 0.0 if world.find("body[@name='ot2_stack_plate_1_body']") is not None else float(config['plate_initial_lift_m'])
+    pose[2] += lift
     plate.set("pos", vector(pose))
     return plate
 
@@ -171,7 +173,7 @@ def build(scene_path, config_path, output_path):
     print(f"Robot stabilization bodies: {bodies}; position actuators tuned: {acts}")
     for name, pos, target in added:
         print(f"Camera {name}: world_pos={tuple(round(x, 3) for x in pos)} -> {target}")
-    print("NOTE: The plate stack is still purely visual, and wrist finger dynamics need a separate stage.")
+    print("NOTE: Tabletop input plates have free joints; legacy fixed stack plates are made dynamic by physics_runtime.")
 
 
 def main():

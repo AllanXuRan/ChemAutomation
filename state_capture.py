@@ -48,6 +48,10 @@ def capture_state(runtime, tcp_id, name, sequence):
         'collision_blocked': runtime.blocked,
         'plate_xyz_world_m': data.xpos[plate].tolist(),
         'plate_quat_wxyz_world': data.xquat[plate].tolist(),
+        'all_plates': {model.body(body).name: {
+            'xyz_world_m': data.xpos[body].tolist(),
+            'quat_wxyz_world': data.xquat[body].tolist(),
+        } for body in sorted(runtime.controller.plate_bodies)},
     }
 
 
