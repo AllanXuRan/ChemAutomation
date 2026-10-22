@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -444,8 +445,17 @@ def camera_xyaxes(position, target):
     return fmt([*right, *up])
 
 
-def resolve_mesh_paths(root, urdf):
-    """Maintain compatibility with the existing exported robot MJCF meshes."""
+def scene_relative(path, scene_dir):
+    """Mesh path written as ../<path from the folder above the scene's folder>, so the scene
+    loads on any machine, from its own folder and from a folder beside it (the tests write
+    scene copies into temporary folders under the project root)."""
+    return "../" + Path(os.path.relpath(Path(path).resolve(), Path(scene_dir).resolve().parent)).as_posix()
+
+
+def resolve_mesh_paths(root, urdf, scene_dir=None):
+    """Maintain compatibility with the existing exported robot MJCF meshes. Paths are written
+    relative to scene_dir, the folder the scene is saved in (default: the URDF's folder)."""
+    scene_dir = urdf.parent if scene_dir is None else scene_dir
     asset = root.find("asset")
     if asset is None:
         return
@@ -458,7 +468,7 @@ def resolve_mesh_paths(root, urdf):
             continue
         source = Path(raw)
         if source.is_file():
-            node.set("file", source.resolve().as_posix())
+            node.set("file", scene_relative(source, scene_dir))
             continue
         candidates = [urdf.parent]
         if compiler is not None:
@@ -469,7 +479,7 @@ def resolve_mesh_paths(root, urdf):
         found = next((folder/source for folder in candidates if (folder/source).is_file()), None)
         if found is None:
             raise FileNotFoundError(f"Mesh/texture not found: {raw}; keep the complete xarm_description/meshes directory")
-        node.set("file", found.resolve().as_posix())
+        node.set("file", scene_relative(found, scene_dir))
     if compiler is not None:
         for attr in ("assetdir", "meshdir", "texturedir"):
             compiler.attrib.pop(attr, None)
@@ -967,7 +977,7 @@ def build(c, urdf, output, plate_at):
     tree=ET.parse(robot_xml)
     root=tree.getroot()
     root.set("model","xArm5 Bio G2 - OT2 and VersaMax | base-origin frame")
-    resolve_mesh_paths(root,urdf)
+    resolve_mesh_paths(root,urdf,output.parent)
     materials(root)
     world=robot_at_world_origin(root)
     print("[3/4] Adding table, slotted OT-2, thermal block, plate stack, VersaMax...")
