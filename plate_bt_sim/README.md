@@ -99,8 +99,8 @@ Each item is in `configs/plate_bt.yaml` with its reason:
   the approach is out of reach with a level flange.
 - Your grasp controller's `plate_bodies` is set to the plate being handled only, so the collision
   guard and `held` see that plate and no other.
-- The grip force stays at 2 N, and at most 4 N after `StabiliseGrasp`, as tuned under your earlier
-  4 N range (now 8 N).
+- The grip is gentle, 2 N; `StabiliseGrasp` raises it to your limit, 8 N (4 N before your
+  four-plate workflow, when the wet plate held at 4 N).
 - The new-plate area is on the table: on your waiting pad in slot 3 a long-edge grasp collides
   with the temperature module (the heater needs the long edges).
 - Your tray is a drawer on a slide, with a slot cut through the housing behind the recess; your
