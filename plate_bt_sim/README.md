@@ -35,6 +35,31 @@ A run writes `states.npz` (one record per 1/30 s tick: qpos, slip risk, grip for
 action and the fault), `trace.json` (every action, check, measurement and scenario event, and
 each plate's outcome) and `run.log` (your tree's own messages).
 
+## Tested
+
+On 13 Nov 2026, against your `main` at f449b59 (the four-plate workflow) with
+`fix/relative-mesh-paths` merged, MuJoCo 3.16.0, py_trees 2.6.0, numpy 2.4.6:
+
+- `tests/test_plate_bt.py`: all 8 pass, including one clean plate end to end.
+- `configs/plate_bt_continuous.yaml`: as intended. Plates 1, 2 and 4 are measured and end on the
+  storage pile; plate 3 (bubbles) and plate 5 (a pipette tip on it) end on the bin pile; plate 2,
+  skewed in the stack, is grasped again after `RepositionForGrasp`. 1024 s simulated in 403 s; no
+  contact deeper than your 0.3 mm guard.
+- `configs/plate_bt_run.yaml` without the wet plate (five plates): as intended. The clean plate,
+  the skewed new plate (`RepositionForGrasp`), the drawer stopping short (`RetractAndRealign`) and
+  the skewed plate on the storage pile (`RepositionForPlacement`) are measured; the bubbles plate
+  goes to the bin. 1151 s simulated in 272 s; no contact deeper than 0.3 mm.
+
+**Open: the wet plate.** With the wet plate (friction 0.15) the full six-plate run stops at plate 4:
+after `StabiliseGrasp` the slip risk stays above 0.7, and your tree latches its stop when the
+budget of three interventions is spent. With your new `noslip_iterations` 10 the pads' contact
+forces carry tangential components that cancel each other and grow with the grip, and the slip risk
+(the sum of each contact's friction over the friction available) counts them, so a firmer grip no
+longer lowers it. Measured on the plate, the pads' net friction is about its weight (0.39 N against
+16 N of squeeze at 8 N). Summing friction as vectors fixes the reading at 2 N but not at the
+heater's set-down after the grip is raised; switching the no-slip solver off lets the plate slide
+in the grasp on the way to storage. Not fixed yet.
+
 ## How it fits your tree
 
 | Your code | What plate_bt does with it |
