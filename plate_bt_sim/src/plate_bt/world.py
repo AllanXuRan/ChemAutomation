@@ -122,7 +122,7 @@ class SimWorld:
 
     def set_plate_contact(self, k, mu):
         """Plate k's contacts take the pads' parameters (Allan's physics_runtime.py: condim 4,
-        solref 0.004) with friction mu. MuJoCo would otherwise average the pads' stiff solref with
+        the pads' solref) with friction mu. MuJoCo would otherwise average the pads' stiff solref with
         the plate's default 0.02, and the held plate creeps. The plate gets priority, so its
         parameters are used whole; mu below the pads' 1.2 models a wet plate."""
         g, pad = self.plate_geom[k], self.model.geom("left_grip_pad").id
@@ -135,9 +135,11 @@ class SimWorld:
 
     def set_active(self, k):
         """The plate the gripper may touch: Allan's grasp controller and collision guard exempt
-        finger contacts with this plate only."""
+        finger contacts with this plate only. His controller reads `plate_bodies` (a set, since his
+        four-plate workflow) where it read `plate` before; both are set."""
         self.active = k
         self.grip.plate = self.plates[k]
+        self.grip.plate_bodies = {self.plates[k]}
 
     def held(self):
         """Both pads press on the active plate (Allan's PhysicalGraspController.held)."""

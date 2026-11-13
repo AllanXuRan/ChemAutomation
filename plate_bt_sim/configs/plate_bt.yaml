@@ -52,7 +52,7 @@ grasp:
   above: 0.06               # approach and retreat height above the grasp
   test_lift: 0.015
   force_n: 2.0              # a gentle grip; StabiliseGrasp raises it to Allan's limit
-  force_max_n: 4.0          # Allan's finger force range (physics_runtime.py)
+  force_max_n: 4.0          # Allan's finger force range when this was tuned (physics_runtime.py; now 8 N)
   close_s: 1.5
   settle_s: 0.4
   release_above: 0.001      # the plate is let go this far above its seat
