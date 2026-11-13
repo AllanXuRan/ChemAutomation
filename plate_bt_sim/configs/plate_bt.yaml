@@ -35,7 +35,7 @@ areas:
   # keeps the 35 mm approach in reach)
   heater:    {site: ot2_pickup, offset: [0, -0.008, 0], plate_yaw: 0, grasp: long, point: 0, front_y: 0.25, pads_beyond: 0.0215, above: 0.035}
   # Allan's tray guides stand 8 mm above the tray, inside the pads' reach: the pads let go of the
-  # plate 7 mm above its seat, and take it back by its top 6 mm, at his force limit and half speed.
+  # plate 7 mm above its seat, and take it back by its top 6 mm, at 4 N (his force limit when this was tuned) and half speed.
   # The site is the plate's centre with the drawer open
   tray:      {site: versamax_load, plate_yaw: 90, grasp: long, point: 90,
               grasp_h: 0.0075, force_n: 4.0, carry_rad_s: 0.15, release_above: 0.007}
