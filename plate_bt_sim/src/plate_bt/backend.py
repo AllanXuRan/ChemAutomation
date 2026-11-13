@@ -254,11 +254,12 @@ class MujocoBackend:
 
     # ---- helpers -------------------------------------------------------------------------------
     def _taught(self):
-        """Each area's taught plate pose: Allan's site, or a pad's centre on the table."""
+        """Each area's taught plate pose: Allan's site (moved by the area's `offset`, m), or a pad's
+        centre on the table."""
         w, out = self.w, {}
         for name, a in self.cfg["areas"].items():
             if "site" in a:
-                xyz = w.data.site_xpos[w.kin.site_id(w.model, a["site"])].copy()
+                xyz = w.data.site_xpos[w.kin.site_id(w.model, a["site"])].copy() + np.asarray(a.get("offset", (0, 0, 0)), float)
             else:
                 xyz = np.array([*a["xy"], TABLE_TOP + self.cfg["pad_size"][2] + PLATE_HALF[2]])
             out[name] = Pose(xyz, np.radians(a["plate_yaw"]))

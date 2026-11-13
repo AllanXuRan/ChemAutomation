@@ -26,8 +26,11 @@ hubs:                       # via points of a joint-space move whose straight li
 # plate's centre; grasp_h raises it, pads_beyond moves it past the centre along the fingers.
 # Every grasp holds the plate's long edges (pads 84 mm apart).
 areas:
-  # the heater is at the edge of reach: centred pads, or a 6 cm approach, would put the flange out of it
-  heater:    {site: ot2_pickup, plate_yaw: 0, grasp: long, point: 0, front_y: 0.25, pads_beyond: 0.0095, above: 0.035}
+  # the heater is at the edge of reach: centred pads, or a 6 cm approach, would put the flange out of it.
+  # Since Allan moved the temperature block 3 cm further out (temperature_block_offset_xyz_m), the plate
+  # goes 6 mm short of his site in y, as his own lab_motion.py does for it; at the site itself the
+  # approach is out of reach
+  heater:    {site: ot2_pickup, offset: [0, -0.006, 0], plate_yaw: 0, grasp: long, point: 0, front_y: 0.25, pads_beyond: 0.0095, above: 0.035}
   # Allan's tray guides stand 8 mm above the tray, inside the pads' reach: the pads let go of the
   # plate 7 mm above its seat, and take it back by its top 6 mm, at his force limit and half speed.
   # The site is the plate's centre with the drawer open
