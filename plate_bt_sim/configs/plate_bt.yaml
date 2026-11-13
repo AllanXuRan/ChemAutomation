@@ -11,6 +11,8 @@ plate_contact:              # a plate's contacts take the pads' parameters (Alla
   friction: 1.2             # instead of MuJoCo's average with the plate's softer defaults, under which a held
                             # plate creeps and shifts 1 to 8 mm when let go; friction as MuJoCo's default (the
                             # larger of plate 0.8 and pads 1.2)
+  solref: [0.004, 1]        # the pads' solref when this was tuned; Allan's pads are softer now (0.008), under
+                            # which a plate set down presses 0.37 mm into its seat, past his 0.3 mm guard
 tick_hz: 30
 home: {xyz: [-0.05, 0.18, 0.40], point: 0}    # in front of the OT-2's opening
 transit_z: 0.30             # moves between areas run at this TCP height

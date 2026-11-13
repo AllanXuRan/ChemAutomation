@@ -1,22 +1,34 @@
-# plate_bt: Allan's behaviour tree driving his MuJoCo workcell
+# plate_bt_sim: your behaviour tree on the plate workflow, with physical failures
 
-This package runs Xu's overall workflow (`claude-notes/2026-10-22_overall-workflow.md`) with
-Allan's tree, `ChemAutomation/chem_lab_bt/lab_behavior_tree.py`, unchanged. The tree drives his
-simulated xArm5 and G2 through his `PhysicsRuntime`. Nothing in `ChemAutomation/` is edited:
-his tree, his loader, his IK and his runtime are imported. Results are on
-`claude-notes/plate-bt.html`; the plan is `plans/plate-bt.md`.
+Kevin's FYP simulation, built on this repository. It runs Xu's overall workflow (a new plate to
+the heater, formulation inspection, the reader, then storage; a plate with bubbles or a fallen
+tip goes to a bin) with your tree, `chem_lab_bt/lab_behavior_tree.py`, unchanged. The tree drives
+your simulated xArm5 and G2 through your `PhysicsRuntime`. Nothing outside this folder is edited:
+your tree, loader, IK and runtime are imported from the repository root.
+
+What it adds to your cell: a new-plate area, a storage pile and a bin pile on the table; the
+reader's tray as a drawer; failures caused physically (a slipping or dropped plate, a misplaced
+plate, a tip left on the plate, bubbles) and checks that notice them, so your recovery branches
+run on real physics rather than injected faults.
+
+This is a second MuJoCo backend next to your `chem_lab_bt/mujoco_backend.py`. It does not set
+`physical_flow`, so `build_tree` builds `04_NORMAL_ONE_PLATE` and this package puts its five
+new-plate actions in front. To try another tree, build it in `src/plate_bt/tree.py` (or call your
+own builder there) and give any new action names an entry in `ACTIONS` in `src/plate_bt/backend.py`.
 
 ## Running it
 
-In the `fyp-mujoco` environment (MuJoCo 3.x, `py_trees` 2.x), on the GPU machine:
+MuJoCo 3.16, py_trees 2.6, numpy 2.4 (your `requirements.txt`), plus PyYAML and Pillow. From this
+folder, `plate_bt_sim/`:
 
 ```bash
-MUJOCO_GL=egl python scripts/bt/check_layout.py                                      # reach of every area, the drawer
-MUJOCO_GL=egl python scripts/bt/run_plates.py --scenario configs/plate_bt_run.yaml   # writes data/plate_bt_<ts>/
-MUJOCO_GL=egl python scripts/bt/render_run.py data/plate_bt_<ts>                     # clips and stills
-MUJOCO_GL=egl python scripts/bt/run_plates.py --scenario configs/plate_bt_continuous.yaml
-MUJOCO_GL=egl python scripts/bt/render_grid.py data/plate_bt_<ts>                    # one video, four cameras
-MUJOCO_GL=egl python tests/test_plate_bt.py
+export MUJOCO_GL=egl            # headless rendering; leave it out on a desktop
+python tests/test_plate_bt.py                                                # checks, the backend's contract, one plate end to end
+python scripts/bt/check_layout.py                                            # reach of every area, the drawer
+python scripts/bt/run_plates.py --scenario configs/plate_bt_run.yaml         # six plates, one of each failure; writes data/plate_bt_<ts>/
+python scripts/bt/render_run.py data/plate_bt_<ts>                           # clips and stills
+python scripts/bt/run_plates.py --scenario configs/plate_bt_continuous.yaml  # five plates in one run
+python scripts/bt/render_grid.py data/plate_bt_<ts>                          # one video, four cameras
 ```
 
 A run writes `states.npz` (one record per 1/30 s tick: qpos, slip risk, grip force, the active
@@ -31,7 +43,7 @@ each plate's outcome) and `run.log` (your tree's own messages).
 | `RobotBackend` | Implemented by `backend.MujocoBackend`. `ACTIONS` at the top of `backend.py` maps each of your action names to the method that runs it |
 | `Blackboard`, `Settings`, `bt_config.json` | Used as they are: retry limits, the slip threshold 0.7, the preventive budget |
 | Your runner (`main()`) | `runner.run` follows it: tick, finish a plate, reset the tree, next plate, stop on a latched emergency. Before each tick, `backend.sense()` writes the slip risk and checks for a drop, where your comment leaves room for sensor updates |
-| `load_physics_model`, `PhysicsRuntime`, `jac_ik`, `PhysicalGraspController` | Used for every motion, so your collision guard checks every command; `controller.plate` is switched to the plate being handled |
+| `load_physics_model`, `PhysicsRuntime`, `jac_ik`, `PhysicalGraspController` | Used for every motion, so your collision guard checks every command; `controller.plate` and `controller.plate_bodies` are switched to the plate being handled |
 
 ## Modules
 
@@ -78,8 +90,17 @@ Each item is in `configs/plate_bt.yaml` with its reason:
 - `impratio` 10: under the default, the plate creeps out of a held grasp.
 - Armature 0.05 kg·m² on `joint5`: without it, turning joint5 shakes the fingers loose.
 - Plate contacts take the pads' parameters, so the held plate does not creep.
-- Your stack in OT-2 slot 2 is left out: used plates go on a storage pile and rejected plates on a
-  bin pile, both on the table (Kevin, 2026-10-22). Every grasp then holds the plate's long edges.
+- Your stack in OT-2 slot 2 and your source stack on the table are left out: new plates come from
+  the new-plate area, used plates go on a storage pile and rejected plates on a bin pile, all on
+  the table (Kevin, 2026-10-22). Every grasp then holds the plate's long edges.
+- The heater is held as your `lab_motion.py` holds it, since the temperature block moved 3 cm
+  further out: the TCP 8 mm past the plate's centre toward the robot, and the plate set 8 mm short
+  of `ot2_pickup` in y (you use 6 mm; 8 mm keeps the 35 mm approach in reach). At the site itself
+  the approach is out of reach with a level flange.
+- Your grasp controller's `plate_bodies` is set to the plate being handled only, so the collision
+  guard and `held` see that plate and no other.
+- The grip force stays at 2 N, and at most 4 N after `StabiliseGrasp`, as tuned under your earlier
+  4 N range (now 8 N).
 - The new-plate area is on the table: on your waiting pad in slot 3 a long-edge grasp collides
   with the temperature module (the heater needs the long edges).
 - Your tray is a drawer on a slide, with a slot cut through the housing behind the recess; your

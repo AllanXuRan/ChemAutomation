@@ -124,13 +124,14 @@ class SimWorld:
         """Plate k's contacts take the pads' parameters (Allan's physics_runtime.py: condim 4,
         the pads' solref) with friction mu. MuJoCo would otherwise average the pads' stiff solref with
         the plate's default 0.02, and the held plate creeps. The plate gets priority, so its
-        parameters are used whole; mu below the pads' 1.2 models a wet plate."""
+        parameters are used whole; mu below the pads' 1.2 models a wet plate. The config's
+        `plate_contact.solref`, if given, replaces the pads' solref."""
         g, pad = self.plate_geom[k], self.model.geom("left_grip_pad").id
         m = self.model
         m.geom_priority[g] = 1
         m.geom_condim[g] = m.geom_condim[pad]
         m.geom_friction[g] = [mu, *m.geom_friction[pad][1:]]
-        m.geom_solref[g] = m.geom_solref[pad]
+        m.geom_solref[g] = self.cfg["plate_contact"].get("solref", m.geom_solref[pad])
         m.geom_solimp[g] = m.geom_solimp[pad]
 
     def set_active(self, k):
