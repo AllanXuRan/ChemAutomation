@@ -5,6 +5,7 @@ plates wait until a person puts them on the new-plate area. Allan's stack in OT-
 out: storage is a pile on the table (Kevin, 2026-10-22). His files are not written."""
 import copy
 import math
+import re
 import xml.etree.ElementTree as ET
 
 from mujoco_bridge import cameras as C
@@ -82,10 +83,16 @@ def _edit(cfg, n_plates, n_tips):
 
 
 def _remove_ot2_stack(world):
+    """Allan's stacks: the one in OT-2 slot 2 (fixed geoms) and, since his four-plate workflow, his
+    source stack on the table (free bodies ot2_stack_plate_N_body, with reaction_plate at its
+    bottom). The new-plate area and the two piles take their place."""
     ot2 = world.find("body[@name='ot2_enclosure']")
     for el in list(ot2):
         if el.get("name") in OT2_STACK or el.get("name") == "ot2_stack_top_visual":
             ot2.remove(el)
+    for body in list(world.findall("body")):
+        if re.fullmatch(r"ot2_stack_plate_\d+_body", body.get("name", "")):
+            world.remove(body)
 
 
 def _drawer(root, rc):
