@@ -185,9 +185,10 @@ class SimWorld:
         v = np.array([self.data.qvel[dof] for _, _, dof in self.info])
         return np.max(np.abs(q - self.runtime.arm_target)) < rad and np.max(np.abs(v)) < rad_s
 
-    def ik(self, xyz, point, seed):
+    def ik(self, xyz, point, seed, unwind=False):
         """Joint angles that put the TCP at xyz with a level flange and the fingers pointing at
-        `point` (rad, Allan's flange_yaw), starting from `seed`."""
+        `point` (rad, Allan's flange_yaw), starting from `seed`. `unwind` (targets of joint-space
+        moves only, never the steps of a straight line): see `unwind`."""
         s = self.scratch
         s.qpos[:] = self.data.qpos
         seed = np.asarray(seed, float)
@@ -207,14 +208,31 @@ class SimWorld:
                 continue
             if err <= 2e-4:
                 if k == 0:
-                    return q
+                    return self.unwind(q) if unwind else q
                 if best is None or np.max(np.abs(q - seed)) < np.max(np.abs(best - seed)):
                     best = q
             else:
                 why = f"misses by {err * 1000:.1f} mm"
         if best is None:
             raise PlanError(f"IK at {np.round(xyz, 3).tolist()} pointing {np.degrees(point):.0f} deg: {why}")
-        return best
+        return self.unwind(best) if unwind else best
+
+    def unwind(self, q, margin=np.radians(60)):
+        """Joint1 and joint5 turn a full circle each way (±360 deg). A solution found from the
+        nearest seed can wind them up over a run until one sits at its limit, where a straight move
+        that needs a little more turn slides sideways instead. A joint within `margin` of a limit is
+        turned a full circle back: the same pose, with room on both sides."""
+        q = np.array(q, float)
+        for i in (0, 4):
+            jid = self.info[i][0]
+            if not self.model.jnt_limited[jid]:
+                continue
+            lo, hi = self.model.jnt_range[jid]
+            if q[i] > hi - margin and q[i] - 2 * np.pi >= lo + margin:
+                q[i] -= 2 * np.pi
+            elif q[i] < lo + margin and q[i] + 2 * np.pi <= hi - margin:
+                q[i] += 2 * np.pi
+        return q
 
     # ---- gripper ---------------------------------------------------------------------------
     def finger(self):

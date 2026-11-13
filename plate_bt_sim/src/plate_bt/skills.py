@@ -187,7 +187,7 @@ class Skills:
         if out and not (yield from self.go(out)):
             return False
         point = here.yaw + wrap(point - here.yaw)
-        q = self.w.ik(entry, point, self.w.command)
+        q = self.w.ik(entry, point, self.w.command, unwind=True)
         if not (yield from self.joint_move(q, vias=self.hubs([here.yaw + wrap(point - here.yaw) / 2, point, here.yaw]))):
             return False
         return (yield from self.go(into))
@@ -199,7 +199,7 @@ class Skills:
         for xyz in self.cfg["hubs"]:
             for point in points:
                 try:
-                    yield self.w.ik(xyz, point, self.w.command)
+                    yield self.w.ik(xyz, point, self.w.command, unwind=True)
                 except PlanError:
                     pass
 
