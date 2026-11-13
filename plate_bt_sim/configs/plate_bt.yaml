@@ -1,0 +1,90 @@
+# plate_bt: where the plate workflow picks and places in Allan's workcell, how
+# it grasps, and what it accepts. Allan's world frame: robot base at the origin, metres; angles in
+# degrees. "point" is the direction the G2's fingers point (Allan's flange_yaw); "grasp" names the
+# plate edges the pads hold: long (84 mm apart) or short (128 mm apart).
+physics:                    # changes to Allan's physics, each with the reason
+  impratio: 10              # at Allan's default the plate creeps out of the grasp
+joint_armature:             # kg m^2. Allan's joint5 has none; turning it then shakes the fingers (143 mm/s
+  joint5: 0.05              # with the gripper empty) and a held plate falls. 0.05 is of the order of a
+                            # harmonic drive's reflected rotor inertia; with it the fingers stay within 5 mm/s
+plate_contact:              # a plate's contacts take the pads' parameters (Allan's solref 0.004, condim 4)
+  friction: 1.2             # instead of MuJoCo's average with the plate's softer defaults, under which a held
+                            # plate creeps and shifts 1 to 8 mm when let go; friction as MuJoCo's default (the
+                            # larger of plate 0.8 and pads 1.2)
+tick_hz: 30
+home: {xyz: [-0.05, 0.18, 0.40], point: 0}    # in front of the OT-2's opening
+transit_z: 0.30             # moves between areas run at this TCP height
+hubs:                       # via points of a joint-space move whose straight line would collide, tried in order
+  - [-0.05, 0.25, 0.40]     # in front of the OT-2's front-right post, which a wide sweep of the arm hits
+  - [-0.05, 0.20, 0.30]
+  - [0.05, 0.25, 0.40]
+  - [-0.15, 0.20, 0.30]
+  - [-0.05, 0.18, 0.40]     # home
+
+# Allan's sites name the plate's centre. front_y: an area inside the OT-2 is entered and left along
+# y through this point, at its approach height; other areas are entered from above. A grasp puts the pads' centre on the
+# plate's centre; grasp_h raises it, pads_beyond moves it past the centre along the fingers.
+# Every grasp holds the plate's long edges (pads 84 mm apart).
+areas:
+  # the heater is at the edge of reach: centred pads, or a 6 cm approach, would put the flange out of it
+  heater:    {site: ot2_pickup, plate_yaw: 0, grasp: long, point: 0, front_y: 0.25, pads_beyond: 0.0095, above: 0.035}
+  # Allan's tray guides stand 8 mm above the tray, inside the pads' reach: the pads let go of the
+  # plate 7 mm above its seat, and take it back by its top 6 mm, at his force limit and half speed.
+  # The site is the plate's centre with the drawer open
+  tray:      {site: versamax_load, plate_yaw: 90, grasp: long, point: 90,
+              grasp_h: 0.0075, force_n: 4.0, carry_rad_s: 0.15, release_above: 0.007}
+  # not in Allan's layout: pads on the table. A pile's seat is its pad; each
+  # plate goes on the plate below
+  new_plate: {xy: [0.32, -0.18], plate_yaw: 0, grasp: long, point: 0, pads_beyond: 0.0095, pile: true}   # held as the heater needs; new plates may be stacked
+  # used plates, after the reader; turned so that a plate taken from the tray (held by its top
+  # 6 mm) arrives without joint5 turning, which loosens that grasp
+  storage:   {xy: [0.30, 0.25], plate_yaw: 48, grasp: long, point: 48, pile: true}
+  # rejected plates, from the heater
+  bin:       {xy: [0.45, 0.0], plate_yaw: 0, grasp: long, point: 0, pile: true}
+pad_size: [0.136, 0.092, 0.003]
+
+grasp:
+  clearance: 0.006          # each pad stands this far off the plate before closing and after opening
+  above: 0.06               # approach and retreat height above the grasp
+  test_lift: 0.015
+  force_n: 2.0              # a gentle grip; StabiliseGrasp raises it to Allan's limit
+  force_max_n: 4.0          # Allan's finger force range (physics_runtime.py)
+  close_s: 1.5
+  settle_s: 0.4
+  release_above: 0.001      # the plate is let go this far above its seat
+
+speed:
+  empty_rad_s: 0.45         # peak joint speed of the profiles; Allan's runtime caps commands at 0.5 rad/s
+  carry_rad_s: 0.30
+  stabilised_factor: 0.6    # after StabiliseGrasp, the rest of the plate's moves run this much slower
+  set_down_factor: 0.3      # the last few mm of a placement run this much slower
+
+tolerance:
+  grasp_xy_m: 0.003         # pre-check: plate against the grasp pose
+  grasp_yaw_deg: 2.0
+  lift_follow_m: 0.002      # test lift: the plate rises with the TCP
+  held_tilt_deg: 3.0
+  align_xy_m: 0.002         # pre-insertion: plate against the tray pocket
+  align_yaw_deg: 2.0
+  place_xy_m: 0.003         # after release: plate against its seat or the plate below
+  place_yaw_deg: 2.0
+  place_tilt_deg: 1.5
+  drop_m: 0.03              # a carried plate this far below its place in the grasp has dropped
+
+slip:
+  filter_s: 0.2             # the slip risk (friction use of the pad contacts) is smoothed over this time
+
+timing:
+  formulation_s: 3.0        # the OT-2's dispense, not simulated
+  reading_s: 3.0            # the reader's measurement, not simulated
+
+reader:                     # Allan's tray as a drawer (scene._drawer, reader.SimReader); not in his model
+  travel_m: 0.15            # open to closed: the tray and its plate end 5 mm inside the housing
+  move_s: 3.0               # each open or close, on a minimum-jerk profile
+  kp: 400                   # N/m, the drawer's position actuator...
+  damping: 20               # ...and its slide's damping (N s/m): about critically damped with the plate on it
+  slot_clearance_m: 0.003   # between the drawer and the slot through the housing, at the sides and back
+  slot_height_m: 0.025      # the slot's roof above the tray (the plate stands 15 mm, the guides 8 mm)
+  clear_xyz: [-0.05, 0.18, 0.40]   # where the arm waits while the drawer moves (home)
+  keep_out: [[-0.05, 0.37], [0.36, 0.98]]   # x and y range of the reader and its recess, plus 2 cm: the
+                                            # TCP and the flange stay outside it while the drawer moves

@@ -1,0 +1,13 @@
+# One continuous run: five new plates stacked on the new-plate
+# area, three plates already on the storage pile and one on the bin pile; a skewed plate in the
+# stack, bubbles, and a pipette tip fallen onto a plate. Keys: src/plate_bt/events.py.
+start: {storage: 3, bin: 1, supply: stack}
+plates:
+  - name: clean
+  - name: skewed in the stack
+    new_plate: {dx: 0.004, dy: -0.003, dyaw: 9}
+  - name: bubbles in the formulation
+    anomaly: bubble
+  - name: clean
+  - name: pipette tip on the plate
+    anomaly: tip

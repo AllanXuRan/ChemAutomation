@@ -1,0 +1,66 @@
+# The lab's three cameras, in Allan's world frame: robot base at the origin,
+# metres, +x right, +y back, +z up. MuJoCo (src/mujoco_bridge/cameras.py) and Blender
+# (scripts/render_simtask.py, views lab:<name>) both read this file, so the two renderers see the
+# same views. `body` is the body a camera is fixed to ("world" for a fixed mount); pos, look_at and
+# up are in that body's frame. fovy is the vertical field of view in degrees; resolution is
+# [width, height]. Every placement is PROVISIONAL (Kevin, 2026-10-27: "there are uncertainties,
+# which we can resolve later iteratively"); `assumed` says what each one rests on.
+
+cameras:
+  wrist:
+    # The G2's base frame: +x along the fingers, +z down when the flange is level (measured
+    # 2026-10-27: TCP at (0.135, 0, 0.055), pads from x 0.127 to 0.171, 40 to 59 mm below the
+    # flange). The camera is a RealSense bar lying along the fingers on a bracket, its lens 100 mm
+    # ahead of the wrist axis and 85 mm above the flange, aimed at 125 mm ahead of the wrist axis at
+    # the height of a held plate's top, so that all 12 columns of a held plate are in view (with the
+    # lens 70 mm up and aimed at the pads' centre, the column nearest the wrist was cut off).
+    body: bio_gripper_base_link
+    pos: [0.100, 0.0, -0.085]
+    look_at: [0.125, 0.0, 0.045]
+    up: [0.0, -1.0, 0.0]              # the bar along the fingers: the fingertips at the image's right
+    fovy: 42.0
+    resolution: [1280, 720]
+    housing:
+      size: [0.090, 0.025, 0.025]     # a D435i: 90 x 25 x 25 mm, long side along the image's width
+    assumed: >-
+      An Intel RealSense with a rectangular bar body (Kevin, 2026-10-28; model to be read off the
+      camera). Field of view of the D435i colour stream (69 x 42 degrees), which the D415 and D435
+      share. The bar's orientation and the bracket are assumed. The box is centred on the lens; on
+      the real camera the colour lens sits towards one end of the bar.
+
+  reader:
+    # Over the back half of the VersaMax (housing top at z 0.21), looking forward and down past the
+    # open tray (Allan's versamax_load site, (0.07, 0.45, 0.1125)) towards the robot, so that the
+    # tray and the robot's base, wrist and gripper are in view.
+    body: world
+    pos: [0.07, 0.66, 0.70]
+    look_at: [0.05, 0.30, 0.14]
+    up: [0.0, -1.0, 0.0]              # the robot side at the top of the image
+    fovy: 42.0
+    resolution: [1280, 720]
+    housing:
+      size: [0.090, 0.025, 0.025]     # a D435i
+    assumed: >-
+      Mount and camera not decided ("somewhere above the reader"). Height 0.49 m above the
+      reader's top; a RealSense D435i (69 x 42 degree colour stream), like the wrist camera.
+      Aimed to show part of the robot as well as the tray (Kevin, 2026-10-28).
+
+  ot2:
+    # The OT-2's built-in camera, inside its frame under the top front-left corner, looking at
+    # the middle of the deck (between slots 5 and 8). Allan's OT-2: origin (-0.36, 0.67, -0.01),
+    # frame posts at x +-0.303 and y +-0.273 from it, top beams at z 0.626 to 0.65, deck at z 0.058.
+    body: world
+    pos: [-0.61, 0.43, 0.52]
+    look_at: [-0.36, 0.67, 0.058]
+    up: [0.0, 1.0, 0.0]               # the back of the deck at the top of the image
+    fovy: 60.0
+    resolution: [1280, 960]
+    assumed: >-
+      Position not documented: Opentrons says only that the camera is built into the chassis
+      with a view of the deck. Its stills are 640 x 480 (Opentrons' camera page) or full HD (the
+      OT-2 app manual); rendered here at 1280 x 960, 4:3.
+
+housing:                              # a box behind each camera's optical centre, drawn so the
+  size: [0.04, 0.03, 0.03]            # mounts show in other views; it never collides. A camera's
+                                      # own `housing` entries replace these
+  rgba: [0.12, 0.13, 0.15, 1.0]
