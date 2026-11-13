@@ -39,7 +39,7 @@ areas:
               grasp_h: 0.0075, force_n: 4.0, carry_rad_s: 0.15, release_above: 0.007}
   # not in Allan's layout: pads on the table. A pile's seat is its pad; each
   # plate goes on the plate below
-  new_plate: {xy: [0.32, -0.18], plate_yaw: 0, grasp: long, point: 0, pads_beyond: 0.0095, pile: true}   # held as the heater needs; new plates may be stacked
+  new_plate: {xy: [0.32, -0.18], plate_yaw: 0, grasp: long, point: 0, pads_beyond: 0.0215, pile: true}   # held as the heater needs; new plates may be stacked
   # used plates, after the reader; turned so that a plate taken from the tray (held by its top
   # 6 mm) arrives without joint5 turning, which loosens that grasp
   storage:   {xy: [0.30, 0.25], plate_yaw: 48, grasp: long, point: 48, pile: true}
