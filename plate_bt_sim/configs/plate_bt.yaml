@@ -7,7 +7,7 @@ physics:                    # changes to Allan's physics, each with the reason
 joint_armature:             # kg m^2. Allan's joint5 has none; turning it then shakes the fingers (143 mm/s
   joint5: 0.05              # with the gripper empty) and a held plate falls. 0.05 is of the order of a
                             # harmonic drive's reflected rotor inertia; with it the fingers stay within 5 mm/s
-plate_contact:              # a plate's contacts take the pads' parameters (Allan's solref 0.004, condim 4)
+plate_contact:              # a plate's contacts take the pads' parameters (Allan's solref, condim 4)
   friction: 1.2             # instead of MuJoCo's average with the plate's softer defaults, under which a held
                             # plate creeps and shifts 1 to 8 mm when let go; friction as MuJoCo's default (the
                             # larger of plate 0.8 and pads 1.2)
