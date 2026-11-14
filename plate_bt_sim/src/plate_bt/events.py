@@ -15,16 +15,14 @@ which the detector placeholder reports (for a fallen tip, a tip is also left lyi
     new_plate: {dx: m, dy: m, dyaw: deg}   the new plate is off its taught pose (on the area, or on
                                            the plate below it in the supply stack)
     anomaly: bubble | tip                  the detector flags the formulation
-    friction: mu                           the plate's sides are wet: friction mu instead of 1.2
-    drawer_short: m                        the reader's drawer stops this far short of open
-    storage_plate_dyaw: deg                before this plate is stored, a person puts a plate on the
+    storage_plate_dyaw: deg               before this plate is stored, a person puts a plate on the
                                            storage pile, turned by this much
 """
 from pathlib import Path
 
 import yaml
 
-KEYS = {"name", "new_plate", "anomaly", "friction", "drawer_short", "storage_plate_dyaw"}
+KEYS = {"name", "new_plate", "anomaly", "storage_plate_dyaw"}
 START_KEYS = {"storage", "bin", "supply"}
 
 

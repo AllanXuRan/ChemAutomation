@@ -7,9 +7,11 @@ your simulated xArm5 and G2 through your `PhysicsRuntime`. Nothing outside this 
 your tree, loader, IK and runtime are imported from the repository root.
 
 What it adds to your cell: a new-plate area, a storage pile and a bin pile on the table; the
-reader's tray as a drawer; failures caused physically (a slipping or dropped plate, a misplaced
-plate, a tip left on the plate, bubbles) and checks that notice them, so your recovery branches
-run on real physics rather than injected faults.
+reader's tray as a drawer; the failures Kevin and Xu named, caused physically where they can be
+(a new plate left skewed, a skewed plate on the storage pile, a pipette tip left on the plate,
+bubbles), and checks that notice them, so your recovery branches run on physics rather than
+injected faults. `StabiliseGrasp` and `RetractAndRealign` are implemented for your tree, but no
+scenario causes a slipping plate or a misaligned tray.
 
 This is a second MuJoCo backend next to your `chem_lab_bt/mujoco_backend.py`. It does not set
 `physical_flow`, so `build_tree` builds `04_NORMAL_ONE_PLATE` and this package puts its five
@@ -25,7 +27,7 @@ folder, `plate_bt_sim/`:
 export MUJOCO_GL=egl            # headless rendering; leave it out on a desktop
 python tests/test_plate_bt.py                                                # checks, the backend's contract, one plate end to end
 python scripts/bt/check_layout.py                                            # reach of every area, the drawer
-python scripts/bt/run_plates.py --scenario configs/plate_bt_run.yaml         # six plates, one of each failure; writes data/plate_bt_<ts>/
+python scripts/bt/run_plates.py --scenario configs/plate_bt_run.yaml         # four plates (clean, skewed new plate, bubbles, skewed storage pile); writes data/plate_bt_<ts>/
 python scripts/bt/render_run.py data/plate_bt_<ts>                           # clips and stills
 python scripts/bt/run_plates.py --scenario configs/plate_bt_continuous.yaml  # five plates in one run
 python scripts/bt/render_grid.py data/plate_bt_<ts>                          # one video, four cameras
@@ -124,8 +126,7 @@ Each item is in `configs/plate_bt.yaml` with its reason:
   the approach is out of reach with a level flange.
 - Your grasp controller's `plate_bodies` is set to the plate being handled only, so the collision
   guard and `held` see that plate and no other.
-- The grip is gentle, 2 N; `StabiliseGrasp` raises it to your limit, 8 N (4 N before your
-  four-plate workflow, when the wet plate held at 4 N).
+- The grip is gentle, 2 N; `StabiliseGrasp` raises it to your limit, 8 N.
 - The new-plate area is on the table: on your waiting pad in slot 3 a long-edge grasp collides
   with the temperature module (the heater needs the long edges).
 - Your tray is a drawer on a slide, with a slot cut through the housing behind the recess; your

@@ -1,14 +1,10 @@
-# The plate workflow's run: six plates, a clean one and one of each
-# failure. Keys: src/plate_bt/events.py.
+# The plate workflow's run: four plates, a clean one and one of each failure
+# Kevin and Xu named. Keys: src/plate_bt/events.py.
 plates:
   - name: clean
   - name: new plate left skewed
     new_plate: {dx: 0.004, dy: -0.003, dyaw: 9}
   - name: bubbles in the formulation
     anomaly: bubble
-  - name: wet plate
-    friction: 0.15
-  - name: drawer stops short
-    drawer_short: 0.006
   - name: skewed plate on the storage pile
     storage_plate_dyaw: 8

@@ -46,8 +46,8 @@ def test_clear_of_the_reader():
 def test_slip_risk_is_the_share_of_friction_used():
     weight = 0.0396 * 9.81
     dry = [(2.0, weight / 2, 1.2)] * 2            # (normal, tangential, mu) per pad
-    wet = [(2.0, weight / 2, 0.15)] * 2
-    assert checks.slip_risk(dry) < 0.1 < 0.6 < checks.slip_risk(wet) < 0.7
+    low_mu = [(2.0, weight / 2, 0.15)] * 2
+    assert checks.slip_risk(dry) < 0.1 < 0.6 < checks.slip_risk(low_mu) < 0.7
     assert checks.slip_risk([]) == 0.0
 
 

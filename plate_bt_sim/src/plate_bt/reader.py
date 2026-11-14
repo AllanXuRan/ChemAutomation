@@ -18,7 +18,6 @@ class SimReader:
         j = m.joint(DRAWER_JOINT).id
         self.qadr, self.vadr = int(m.jnt_qposadr[j]), int(m.jnt_dofadr[j])
         self.open_at, self.closed_at = 0.0, self.cfg["travel_m"]
-        self.open_error = 0.0        # simulation helper: the drawer stops this far short of open
         self.profile = None          # (start time, from, to) of the drawer's current move
         self.target = self.closed_at
         self.put(self.closed_at)
@@ -26,7 +25,7 @@ class SimReader:
 
     # ---- the reader's interface --------------------------------------------------------------
     def open(self):
-        self._go(self.open_at + self.open_error)
+        self._go(self.open_at)
 
     def close(self):
         self._go(self.closed_at)

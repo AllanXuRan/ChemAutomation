@@ -192,17 +192,12 @@ class MujocoBackend:
 
     def on_plate_start(self, plate_id):
         """Reset per-plate settings, and make the scenario's changes for this plate that do not
-        wait for a step: where the reader's drawer stops when it opens, a plate a person puts on
-        the storage pile."""
+        wait for a step: a plate a person puts on the storage pile."""
         self.target = dict(self.taught)
         self.sk.speed_scale = 1.0
         self.stabilised = False
         self.w.set_grip_force(self.cfg["grasp"]["force_n"])
         entry = self.scenario.plate(plate_id)
-        short = float(entry.get("drawer_short", 0.0))
-        self.reader.open_error = short
-        if short:
-            self.note("event", None, what=f"the reader's drawer will stop {short * 1000:.0f} mm short of open")
         if self.scenario.stacked:     # the plate is the top of the supply stack
             below = len(self.scenario) - plate_id
             self.target["new_plate"] = self.taught["new_plate"].moved((0, 0, PLATE_H * below))
@@ -241,8 +236,6 @@ class MujocoBackend:
                 entry, k = sc.plates[i], self.supply[i]
                 off = entry.get("new_plate", {})
                 level = len(sc) - 1 - i
-                if "friction" in entry:
-                    self.w.set_plate_contact(k, entry["friction"])
                 self.w.put_plate(k, self.taught["new_plate"].moved((off.get("dx", 0), off.get("dy", 0), PLATE_H * level),
                                                                    np.radians(off.get("dyaw", 0))))
                 self._no_overlap(k)
@@ -450,12 +443,10 @@ class MujocoBackend:
         self.w.set_active(self.k)
         off = entry.get("new_plate", {})
         pose = self.taught["new_plate"].moved((off.get("dx", 0), off.get("dy", 0), 0), np.radians(off.get("dyaw", 0)))
-        if "friction" in entry:
-            self.w.set_plate_contact(self.k, entry["friction"])
         self.w.put_plate(self.k, pose)
         self._no_overlap(self.k)
         self.note("event", None, what="a person puts a new plate on the new-plate area", plate_body=self.k + 1,
-                  **({"offset": off} if off else {}), **({"friction": entry["friction"]} if "friction" in entry else {}))
+                  **({"offset": off} if off else {}))
         return (yield from self._approach("new_plate", self.target["new_plate"]))
 
     def grasp_new_plate(self):
